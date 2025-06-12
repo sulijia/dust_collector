@@ -1,148 +1,26 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "./interface.sol";
+import "@uniswap/universal-router/contracts/interfaces/IUniversalRouter.sol";
+import "@uniswap/universal-router/lib/permit2/src/interfaces/IPermit2.sol";
 
-interface IUniswapV2Router01 {
-    function factory() external pure returns (address);
-    function WETH() external pure returns (address);
-
-    function addLiquidity(
-        address tokenA,
-        address tokenB,
-        uint amountADesired,
-        uint amountBDesired,
-        uint amountAMin,
-        uint amountBMin,
-        address to,
-        uint deadline
-    ) external returns (uint amountA, uint amountB, uint liquidity);
-    function addLiquidityETH(
-        address token,
-        uint amountTokenDesired,
-        uint amountTokenMin,
-        uint amountETHMin,
-        address to,
-        uint deadline
-    ) external payable returns (uint amountToken, uint amountETH, uint liquidity);
-    function removeLiquidity(
-        address tokenA,
-        address tokenB,
-        uint liquidity,
-        uint amountAMin,
-        uint amountBMin,
-        address to,
-        uint deadline
-    ) external returns (uint amountA, uint amountB);
-    function removeLiquidityETH(
-        address token,
-        uint liquidity,
-        uint amountTokenMin,
-        uint amountETHMin,
-        address to,
-        uint deadline
-    ) external returns (uint amountToken, uint amountETH);
-    function removeLiquidityWithPermit(
-        address tokenA,
-        address tokenB,
-        uint liquidity,
-        uint amountAMin,
-        uint amountBMin,
-        address to,
-        uint deadline,
-        bool approveMax, uint8 v, bytes32 r, bytes32 s
-    ) external returns (uint amountA, uint amountB);
-    function removeLiquidityETHWithPermit(
-        address token,
-        uint liquidity,
-        uint amountTokenMin,
-        uint amountETHMin,
-        address to,
-        uint deadline,
-        bool approveMax, uint8 v, bytes32 r, bytes32 s
-    ) external returns (uint amountToken, uint amountETH);
-    function swapExactTokensForTokens(
-        uint amountIn,
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external returns (uint[] memory amounts);
-    function swapTokensForExactTokens(
-        uint amountOut,
-        uint amountInMax,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external returns (uint[] memory amounts);
-    function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline)
-        external
-        payable
-        returns (uint[] memory amounts);
-    function swapTokensForExactETH(uint amountOut, uint amountInMax, address[] calldata path, address to, uint deadline)
-        external
-        returns (uint[] memory amounts);
-    function swapExactTokensForETH(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline)
-        external
-        returns (uint[] memory amounts);
-    function swapETHForExactTokens(uint amountOut, address[] calldata path, address to, uint deadline)
-        external
-        payable
-        returns (uint[] memory amounts);
-
-    function quote(uint amountA, uint reserveA, uint reserveB) external pure returns (uint amountB);
-    function getAmountOut(uint amountIn, uint reserveIn, uint reserveOut) external pure returns (uint amountOut);
-    function getAmountIn(uint amountOut, uint reserveIn, uint reserveOut) external pure returns (uint amountIn);
-    function getAmountsOut(uint amountIn, address[] calldata path) external view returns (uint[] memory amounts);
-    function getAmountsIn(uint amountOut, address[] calldata path) external view returns (uint[] memory amounts);
-}
-
-interface IUniswapV2Router02 is IUniswapV2Router01 {
-    function removeLiquidityETHSupportingFeeOnTransferTokens(
-        address token,
-        uint liquidity,
-        uint amountTokenMin,
-        uint amountETHMin,
-        address to,
-        uint deadline
-    ) external returns (uint amountETH);
-    function removeLiquidityETHWithPermitSupportingFeeOnTransferTokens(
-        address token,
-        uint liquidity,
-        uint amountTokenMin,
-        uint amountETHMin,
-        address to,
-        uint deadline,
-        bool approveMax, uint8 v, bytes32 r, bytes32 s
-    ) external returns (uint amountETH);
-
-    function swapExactTokensForTokensSupportingFeeOnTransferTokens(
-        uint amountIn,
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external;
-    function swapExactETHForTokensSupportingFeeOnTransferTokens(
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external payable;
-    function swapExactTokensForETHSupportingFeeOnTransferTokens(
-        uint amountIn,
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external;
-}
 
 contract DustCollector {
     address public routerAddr;
+    address public uniRouterAddr;
+    IUniversalRouter public universalRouter;
+    IPermit2 public immutable permit2;
+    address public permit2Addr;
+    uint8 constant V2_SWAP_EXACT_IN = 0x08;
 
-    constructor(address _router) {
+    constructor(address _router, address _uni_router, address _permit2) {
         routerAddr = _router;
+        uniRouterAddr = _uni_router;
+        universalRouter = IUniversalRouter(_uni_router);
+        permit2Addr = _permit2;
+        permit2 = IPermit2(_permit2);
     }
 
     function  swapDust(address[] memory tokens, address to) external {
@@ -166,6 +44,35 @@ contract DustCollector {
                 uint256[] memory amountsR = router.swapExactTokensForTokens(amount, tokenAmountEst, path, msg.sender, block.timestamp);
                 require(amountsR[amountsR.length-1] >= tokenAmountEst, "amount smaller than estimate");
             }
+        }
+    }
+
+    function  swapDustUni(address[] memory tokens, address to) external {
+        address[] memory path = new address[](2);
+        bytes[] memory inputs = new bytes[](1);
+
+        for (uint256 index = 0; index < tokens.length; index++) {
+            address otherToken = tokens[index];
+            uint256 amount = IERC20(otherToken).balanceOf( msg.sender );
+            IERC20(otherToken).transferFrom(msg.sender, address(this), amount);
+            IERC20(otherToken).approve(address(permit2), type(uint256).max);
+            permit2.approve(
+            otherToken,
+            address(universalRouter),
+            type(uint160).max,
+            type(uint48).max
+            );
+
+            bytes memory commands = abi.encodePacked(
+                bytes1(uint8(V2_SWAP_EXACT_IN))
+            );
+            path[0] = otherToken;
+            path[1] = to;
+            inputs[0] = abi.encode(address(msg.sender), amount, 0, path, true);
+
+            uint256 deadline = block.timestamp + 1800;
+
+            universalRouter.execute(commands, inputs, deadline);
         }
     }
 }
