@@ -1,0 +1,40 @@
+Arguments: 
+  /usr/local/bin/node /home/sulijia/.yarn/bin/yarn.js add bignumber.js
+
+PATH: 
+  /home/sulijia/go/bin:/home/sulijia/.yarn/bin:/home/sulijia/.config/yarn/global/node_modules/.bin:/home/sulijia/.local/share/solana/install/active_release/bin:/home/sulijia/.dotnet/tools:/home/sulijia/bin:/home/sulijia/.cargo/bin:/home/sulijia/.local/bin:/home/sulijia/bin:/home/sulijia/.local/share/pnpm:/home/sulijia/go/bin:/home/sulijia/.yarn/bin:/home/sulijia/.config/yarn/global/node_modules/.bin:/home/sulijia/.local/share/solana/install/active_release/bin:/home/sulijia/.dotnet/tools:/home/sulijia/bin:/home/sulijia/.cargo/bin:/home/sulijia/.cargo/bin:/home/sulijia/.local/bin:/home/sulijia/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/home/sulijia/.local/share/JetBrains/Toolbox/scripts:/home/sulijia/.foundry/bin:/home/sulijia/.local/share/solana/install/active_release/bin:/home/sulijia/.local/share/JetBrains/Toolbox/scripts:/home/sulijia/.foundry/bin:/home/sulijia/.local/share/solana/install/active_release/bin
+
+Yarn version: 
+  1.22.19
+
+Node version: 
+  20.18.0
+
+Platform: 
+  linux x64
+
+Trace: 
+  Error: read ENETUNREACH
+      at TLSWrap.onStreamRead (node:internal/stream_base_commons:218:20)
+
+npm manifest: 
+  {
+    "name": "hardhat-project",
+    "dependencies": {
+      "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+      "@openzeppelin/contracts": "^5.3.0",
+      "@uniswap/sdk-core": "^7.7.2",
+      "@uniswap/universal-router": "^2.0.0",
+      "@uniswap/v3-periphery": "^1.4.4",
+      "dotenv": "^16.5.0"
+    },
+    "devDependencies": {
+      "hardhat": "^2.24.2"
+    }
+  }
+
+yarn manifest: 
+  No manifest
+
+Lockfile: 
+  No lockfile
