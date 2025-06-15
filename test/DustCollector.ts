@@ -9,7 +9,7 @@ import { Currency, MaxUint256, Token } from '@uniswap/sdk-core'
 import { Pool, Position, nearestUsableTick,FeeAmount } from '@uniswap/v3-sdk'
 import { abi as TOKEN_ABI } from './solmate/src/tokens/ERC20.sol/ERC20.json'
 import hre from 'hardhat'
-import {ContractFactory} from 'ethers'
+import {ContractFactory, parseUnits, solidityPacked, AbiCoder, ZeroHash} from 'ethers'
 import {
   ALICE_ADDRESS,
   DAI,
@@ -32,12 +32,13 @@ import {
 } from './planner'
 
 import {
-  getPermitSignature
+  getPermitSignature, PermitSingle,PermitBatch, PermitDetails,getPermitBatchSignature
 } from './permit2'
 
 import {
   executeRouter
 } from './executeRouter'
+import { universalRouter } from "../typechain-types/factories/@uniswap";
 
 const artifacts = {
   UniswapV3Factory: require("@uniswap/v3-core/artifacts/contracts/UniswapV3Factory.sol/UniswapV3Factory.json"),
@@ -47,7 +48,8 @@ const artifacts = {
   NonfungiblePositionManager: require("@uniswap/v3-periphery/artifacts/contracts/NonfungiblePositionManager.sol/NonfungiblePositionManager.json"),
   UniswapV3Pool: require("@uniswap/v3-core/artifacts/contracts/UniswapV3Pool.sol/UniswapV3Pool.json"),
 };
-
+const bn =require('bignumber.js');
+// bn.config({ EXPONENTIAL_AT: 999999, DECIMAL_PLACES: 40 })
 const{BigNumber}=require('ethers');
 const WETH9 = require('./WETH9.json')
 const UniswapV2Factoryx = require('./UniswapV2Factory.json')
@@ -72,11 +74,6 @@ export const resetFork = async () => {
 describe("Dust collector", function () {
   let alice: any
   let bob: any
-  let daiContract: any
-  let wethContract: any
-  let usdcContract: any
-  let owner:any
-  let addr1:any
   let MyToken:any
   let daiToken:any
   let usdtToken:any
@@ -108,69 +105,70 @@ describe("Dust collector", function () {
       method: 'hardhat_impersonateAccount',
       params: [ALICE_ADDRESS],
     })
-    alice = await ethers.getSigner(ALICE_ADDRESS)
+    // alice = await ethers.getSigner(ALICE_ADDRESS)
+    alice = (await ethers.getSigners())[0]
     bob = (await ethers.getSigners())[1]
-    daiContract = new ethers.Contract(DAI.address, TOKEN_ABI, bob)
-    wethContract = new ethers.Contract(WETH.address, TOKEN_ABI, bob)
-    usdcContract = new ethers.Contract(USDC.address, TOKEN_ABI, bob)
-
-    owner = (await ethers.getSigners())[0];
-    addr1 = (await ethers.getSigners())[1];
+    // deploy erc20 token
     MyToken = await ethers.getContractFactory("MyERC20");
     daiToken = await MyToken.deploy("DAI","DAI");
     usdtToken = await MyToken.deploy("USDT","USDT");
     usdcToken = await MyToken.deploy("USDC","USDC");
-    const WETH9v2 = await ethers.getContractFactory(WETH9.abi, WETH9.bytecode);
-    const WETHContractv2 = await WETH9v2.deploy();
-    WETHAddress = await WETHContractv2.getAddress();
-  
-  //   const UniswapV2Factory = await ethers.getContractFactory(UniswapV2Factoryx.abi, UniswapV2Factoryx.bytecode);
-  //   = await UniswapV2Factory.deploy(owner.address);
-  UniswapV2FactoryContract = new ethers.Contract(V2_FACTORY_MAINNET, UniswapV2Factoryx.abi, bob)
-   UniswapV2FactoryAddress = await UniswapV2FactoryContract.getAddress();
-  console.log(UniswapV2FactoryAddress);
-    const UniswapV2Router02 = await ethers.getContractFactory(UniswapV2Router02x.abi, UniswapV2Router02x.bytecode);
-   UniswapV2Router02Contract = await UniswapV2Router02.deploy(UniswapV2FactoryAddress,WETHAddress);
-   UniswapV2RouterAddress = await UniswapV2Router02Contract.getAddress();
     daiTokenAddress = await daiToken.getAddress();
     usdtTokenAddress = await usdtToken.getAddress();
     usdcTokenAddress = await usdcToken.getAddress();
+    const WETH9v2 = await ethers.getContractFactory(WETH9.abi, WETH9.bytecode);
+    const WETHContractv2 = await WETH9v2.deploy();
+    WETHAddress = await WETHContractv2.getAddress();
 
-   const MAX_MINT = BigInt("100000000000000000000000000000");
-   await daiToken.mint(owner.address, MAX_MINT);
-   await usdtToken.mint(owner.address, MAX_MINT);
-   await usdcToken.mint(owner.address, MAX_MINT);
-   await usdtToken.transfer(addr1.address,  BigInt("10000000000000000000000"));
-   await daiToken.transfer(addr1.address,  BigInt("10000000000000000000000"));
-   await usdcToken.transfer(addr1.address, BigInt("10000000000000000000000"));
+    // deploy uniswap v2 contract
+    UniswapV2FactoryContract = new ethers.Contract(V2_FACTORY_MAINNET, UniswapV2Factoryx.abi, bob)
+    UniswapV2FactoryAddress = await UniswapV2FactoryContract.getAddress();
+    const UniswapV2Router02 = await ethers.getContractFactory(UniswapV2Router02x.abi, UniswapV2Router02x.bytecode);
+    UniswapV2Router02Contract = await UniswapV2Router02.deploy(UniswapV2FactoryAddress,WETHAddress);
+    UniswapV2RouterAddress = await UniswapV2Router02Contract.getAddress();
 
-   await usdtToken.approve(UniswapV2RouterAddress, MAX_UINT);
-   await daiToken.approve(UniswapV2RouterAddress, MAX_UINT);
-   await usdcToken.approve(UniswapV2RouterAddress, MAX_UINT);
+    // mint test erc20 token, transfer token to test address.
+    const MAX_MINT = BigInt("100000000000000000000000000000");
+    await daiToken.mint(alice.address, MAX_MINT);
+    await usdtToken.mint(alice.address, MAX_MINT);
+    await usdcToken.mint(alice.address, MAX_MINT);
+    await usdtToken.transfer(bob.address,  BigInt("100000000000000000000"));
+    await daiToken.transfer(bob.address,  BigInt("100000000000000000000"));
+    await usdcToken.transfer(bob.address, BigInt("100000000000000000000"));
 
-   const DustCollector = await ethers.getContractFactory("DustCollector");
-   router = await deployUniversalRouter(bob.address);
-   routerAddress = await router.getAddress();
-   permit2 = PERMIT2.connect(bob)
-   permit2Address = await permit2.getAddress();
-  console.log(routerAddress, permit2Address);
+    // approve token to uniswapv2 router.
+    await usdtToken.approve(UniswapV2RouterAddress, MAX_UINT);
+    await daiToken.approve(UniswapV2RouterAddress, MAX_UINT);
+    await usdcToken.approve(UniswapV2RouterAddress, MAX_UINT);
 
-  //  Factory = new ContractFactory(artifacts.UniswapV3Factory.abi, artifacts.UniswapV3Factory.bytecode, owner);
-  factory = new ethers.Contract(V3_FACTORY_MAINNET, artifacts.UniswapV3Factory.abi, owner);
-  //  factory = await Factory.deploy();
-   factoryAddress = await factory.getAddress();
-   SwapRouter = new ContractFactory(artifacts.SwapRouter.abi, artifacts.SwapRouter.bytecode, owner);
-   swapRouter = await SwapRouter.deploy(factoryAddress, WETHAddress);
-   swapRouterAddress = await swapRouter.getAddress();
+    router = await deployUniversalRouter(bob.address);
+    routerAddress = await router.getAddress();
+    permit2 = PERMIT2.connect(bob)
+    permit2Address = await permit2.getAddress();
 
+    // deploy uniswap v3 contract
+    factory = new ethers.Contract(V3_FACTORY_MAINNET, artifacts.UniswapV3Factory.abi, alice);
+    factoryAddress = await factory.getAddress();
+    SwapRouter = new ContractFactory(artifacts.SwapRouter.abi, artifacts.SwapRouter.bytecode, alice);
+    swapRouter = await SwapRouter.deploy(factoryAddress, WETHAddress);
+    swapRouterAddress = await swapRouter.getAddress();
 
-   DustCollectorContract = await DustCollector.deploy(UniswapV2RouterAddress, routerAddress, permit2Address, swapRouterAddress);
-   DustCollectorAddress = await DustCollectorContract.getAddress();
+    // deploy dust collector contract
+    // const DustCollector = await ethers.getContractFactory("DustCollector");
+    // DustCollectorContract = await DustCollector.deploy(UniswapV2RouterAddress, routerAddress, permit2Address, swapRouterAddress);
+    // DustCollectorAddress = await DustCollectorContract.getAddress();
+    const DustCollector = await ethers.getContractFactory("DustCollectorUniversalPermit2");
+    DustCollectorContract = await DustCollector.deploy(routerAddress,UniswapV2RouterAddress,UniswapV2RouterAddress, permit2Address, alice.address);
+    DustCollectorAddress = await DustCollectorContract.getAddress();
 
-   await daiToken.connect(addr1).approve(DustCollectorAddress, MAX_UINT);
-   await usdcToken.connect(addr1).approve(DustCollectorAddress, MAX_UINT);
+    await daiToken.connect(bob).approve(permit2Address, MAX_UINT)
+    await usdtToken.connect(bob).approve(permit2Address, MAX_UINT)
+    await usdcToken.connect(bob).approve(permit2Address, MAX_UINT)
 
-   await daiContract.connect(addr1).approve(DustCollectorAddress, MAX_UINT);
+    // for these tests Bob gives the router max approval on permit2
+    await permit2.approve(daiTokenAddress, routerAddress, MAX_UINT160, DEADLINE)
+    await permit2.approve(usdcTokenAddress, routerAddress, MAX_UINT160, DEADLINE)
+    await permit2.approve(usdtTokenAddress, routerAddress, MAX_UINT160, DEADLINE)
   });
 
 
@@ -365,8 +363,6 @@ describe("Dust collector", function () {
       return bytecode
     }
 
-    const bn =require('bignumber.js');
-    // bn.config({ EXPONENTIAL_AT: 999999, DECIMAL_PLACES: 40 })
     function encodePriceSqrt(reserve1: string | number | bigint, reserve0: string | number | bigint): bigint {
       const priceAsBn = new bn(reserve1.toString())
         .div(reserve0.toString())
@@ -376,6 +372,7 @@ describe("Dust collector", function () {
         const priceAsString = priceAsBn.toFixed(0);
       return BigInt(priceAsString);
     }
+
     async function getPoolData(poolContract) {
       const [tickSpacing, fee, liquidity, slot0] = await Promise.all([
         poolContract.tickSpacing(),
@@ -392,9 +389,51 @@ describe("Dust collector", function () {
         tick: slot0[1],
       }
     }
+    async function ensureApproval(token, wallet, spender, amount) {
+      const t = new ethers.Contract(token, MyToken.interface, wallet);
+      const allowance = await t.allowance(wallet.address, spender);
+      if (allowance < amount) {
+        console.log(`⏳ [Approve] ${token} -> Permit2`);
+        await (await t.approve(spender, MAX_UINT)).wait();
+        console.log(`✅ Approved`);
+      }
+    }
+
+    const toJson = (obj) =>
+      JSON.stringify(obj, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2);
+    
+    const v3Path = (a, b, fee) =>
+      solidityPacked(['address', 'uint24', 'address'], [a, fee, b]);
+
+/**
+ * 为指定 token 确保：
+ * ① ERC20 → Permit2 已授权；
+ * ② Permit2 → Collector 已授权。
+ */
+async function ensurePermit2(token, owner, amount) {
+  const erc20  = new ethers.Contract(token, MyToken.interface  , owner);
+  const permit = new ethers.Contract(permit2Address, permit2.interface, owner);
+
+  /* === 1. ERC20 → Permit2 === */
+  const curErc20Allow = await erc20.allowance(owner.address, permit2Address);
+  if (curErc20Allow < amount) {
+    console.log(`  · Approving ERC20 → Permit2   (${token})`);
+    await (await erc20.approve(permit2Address, MAX_UINT)).wait();
+  }
+
+  /* === 2. Permit2 → DustCollector === */
+  const [allowAmt] = await permit.allowance(owner.address, token, DustCollectorAddress);
+  if (allowAmt < amount) {
+    console.log(`  · Approving Permit2 → Collector (${token})`);
+    const maxUint160 = (1n << 160n) - 1n;               // 2¹⁶⁰-1
+    const expiration = Math.floor(Date.now() / 1e3) + 3600 * 24 * 30; // 30 天
+    await (await permit.approve(token, DustCollectorAddress, maxUint160, expiration)).wait();
+  }
+}
+
     it("uniswap v3 test", async function () {
 
-      let NFTDescriptor = new ContractFactory(artifacts.NFTDescriptor.abi, artifacts.NFTDescriptor.bytecode, owner);
+      let NFTDescriptor = new ContractFactory(artifacts.NFTDescriptor.abi, artifacts.NFTDescriptor.bytecode, alice);
       let nftDescriptor = await NFTDescriptor.deploy();
       let nftDescriptorAddress = await nftDescriptor.getAddress();
 
@@ -417,42 +456,37 @@ describe("Dust collector", function () {
         }
       );
 
-      let NonfungibleTokenPositionDescriptor = new ContractFactory(artifacts.NonfungibleTokenPositionDescriptor.abi, linkedBytecode, owner);
+      let NonfungibleTokenPositionDescriptor = new ContractFactory(artifacts.NonfungibleTokenPositionDescriptor.abi, linkedBytecode, alice);
       const nativeCurrencyLabelBytes = ethers.encodeBytes32String('WETH')
       let nonfungibleTokenPositionDescriptor = await NonfungibleTokenPositionDescriptor.deploy(WETHAddress, nativeCurrencyLabelBytes);
       let nonfungibleTokenPositionDescriptorAddress = await nonfungibleTokenPositionDescriptor.getAddress();
 
-      let NonfungiblePositionManager = new ContractFactory(artifacts.NonfungiblePositionManager.abi, artifacts.NonfungiblePositionManager.bytecode, owner);
+      let NonfungiblePositionManager = new ContractFactory(artifacts.NonfungiblePositionManager.abi, artifacts.NonfungiblePositionManager.bytecode, alice);
       let nonfungiblePositionManager = await NonfungiblePositionManager.deploy(factoryAddress, WETHAddress, nonfungibleTokenPositionDescriptorAddress);
       let nonfungiblePositionManagerAddress = await nonfungiblePositionManager.getAddress();
 
-      console.log('FACTORY_ADDRESS=', `'${factoryAddress}'`)
-      console.log('SWAP_ROUTER_ADDRESS=', `'${swapRouterAddress}'`)
-      console.log('NFT_DESCRIPTOR_ADDRESS=', `'${nftDescriptorAddress}'`)
-      console.log('POSITION_DESCRIPTOR_ADDRESS=', `'${nonfungibleTokenPositionDescriptorAddress}'`)
-      console.log('POSITION_MANAGER_ADDRESS=', `'${nonfungiblePositionManagerAddress}'`)
       // deploy v3 pool
-      const price = encodePriceSqrt(1, 1);
-      const poolFee =500;
-      await nonfungiblePositionManager.connect(owner).createAndInitializePoolIfNecessary(
+      const price = encodePriceSqrt(1, 2);
+      const poolFee = 500;
+      await nonfungiblePositionManager.connect(alice).createAndInitializePoolIfNecessary(
         usdtTokenAddress,
         usdcTokenAddress,
         poolFee,
         price,
         // { gasLimit: 5000000 }
       )
-      const poolAddress = await factory.connect(owner).getPool(
+      const poolAddress = await factory.connect(alice).getPool(
         usdtTokenAddress,
         usdcTokenAddress,
         poolFee,
       )
       // addLiquidity
-      const poolContract = new ethers.Contract(poolAddress, artifacts.UniswapV3Pool.abi, owner)
+      const poolContract = new ethers.Contract(poolAddress, artifacts.UniswapV3Pool.abi, alice)
 
       let poolData = await getPoolData(poolContract)
       console.log(poolData);
-      await usdtToken.connect(addr1).approve(nonfungiblePositionManagerAddress, MAX_UINT)
-      await usdcToken.connect(addr1).approve(nonfungiblePositionManagerAddress, MAX_UINT)
+      await usdtToken.connect(alice).approve(nonfungiblePositionManagerAddress, MAX_UINT)
+      await usdcToken.connect(alice).approve(nonfungiblePositionManagerAddress, MAX_UINT)
 
       const UsdtToken = new Token(1, usdtTokenAddress, 18, 'USDT', 'USDT')
       const UsdcToken = new Token(1, usdcTokenAddress, 18, 'USDC', 'USDC')
@@ -483,30 +517,187 @@ describe("Dust collector", function () {
         amount1Desired: amount1Desired.toString(),
         amount0Min: 0,
         amount1Min: 0,
-        recipient: addr1.address,
+        recipient: alice.address,
         deadline: Math.floor(Date.now() / 1000) + (60 * 10)
       }
 
-      await nonfungiblePositionManager.connect(addr1).mint(
+      await nonfungiblePositionManager.connect(alice).mint(
         params,
         { gasLimit: '1000000' }
       );
       poolData = await getPoolData(poolContract)
       console.log('poolData', poolData)
+    //   console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+    //   await daiToken.balanceOf(bob.address)+ ":"+
+    //   await usdcToken.balanceOf(bob.address)
+    //   );
 
-      console.log("before swap:" + await usdtToken.balanceOf(addr1.address) + ":"+
-      await daiToken.balanceOf(addr1.address)+ ":"+
-      await usdcToken.balanceOf(addr1.address)
+    //  await DustCollectorContract.connect(bob).swapDustV3Uni([usdcTokenAddress], usdtTokenAddress);
+    // console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+    // await daiToken.balanceOf(bob.address)+ ":"+
+    // await usdcToken.balanceOf(bob.address)
+    // );
+      const chainId  = 1;
+      let TOKENS = [
+        { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+        // { addr: usdtTokenAddress, dec: 18, amt: '0.02', fee: 3000, amtWei: 0n }
+      ];
+      /* step 0: prepare amounts */
+      for (const tk of TOKENS) tk.amtWei = parseUnits(tk.amt, tk.dec);
+       /* step 1: ERC20 -> Permit2 approvals */
+      console.log('📋 Step 1) ERC20 approvals');
+      for (const tk of TOKENS)
+        await ensureApproval(tk.addr, bob, permit2Address, tk.amtWei);
+
+      /* step 2: build batch-permit typed-data & sign */
+      console.log('\n📋 Step 2) Build & sign Permit2 batch');
+
+      const expiration  = Math.floor(Date.now() / 1e3) + 86400 * 30;   // 30d
+      const sigDeadline = Math.floor(Date.now() / 1e3) + 3600;        // 1h
+
+      const details:PermitDetails[] = [];
+      for (const tk of TOKENS) {
+        const [, , nonce] = await permit2.allowance(bob.address, tk.addr, DustCollectorAddress);
+        details.push({ token: tk.addr, amount: tk.amtWei, expiration, nonce });
+      }
+      const permitBatch:PermitBatch = { details, spender: DustCollectorAddress, sigDeadline };
+
+      const domain = { name: 'Permit2', chainId, verifyingContract: permit2Address };
+      const types  = {
+        PermitBatch:   [{ name: 'details', type: 'PermitDetails[]' }, { name: 'spender', type: 'address' }, { name: 'sigDeadline', type: 'uint256' }],
+        PermitDetails: [{ name: 'token', type: 'address' }, { name: 'amount', type: 'uint160' }, { name: 'expiration', type: 'uint48' }, { name: 'nonce', type: 'uint48' }]
+      };
+    
+      console.log('📝 TypedData:\n', toJson({ domain, types, permitBatch }), '\n');
+      const signature = await bob.signTypedData(domain, types, permitBatch);
+      // const signature = await getPermitBatchSignature(permitBatch, bob, permit2)
+      console.log('🔑 Signature:', signature, '\n');
+    
+      /* step 3: send permit tx */
+      console.log('📋 Step 3) Send permit() tx');
+      const permitTx = await permit2["permit(address,((address,uint160,uint48,uint48)[],address,uint256),bytes)"](bob.address, permitBatch, signature);
+      console.log('⛓️  Permit TxHash:', permitTx.hash);
+      await permitTx.wait();
+      console.log('✅ Permit tx confirmed\n');
+      // let planner = new RoutePlanner();
+      // planner.addCommand(CommandType.PERMIT2_PERMIT_BATCH, [permitBatch, signature])
+      // await executeRouter(
+      //   planner,
+      //   bob,
+      //   router,
+      //   usdtToken,
+      //   daiToken,
+      //   usdcToken
+      // )
+      // for (const tk of TOKENS) {
+      //   tk.amtWei = parseUnits(tk.amt, tk.dec);          // BigInt 数量
+      //   await ensurePermit2(tk.addr, bob, tk.amtWei);
+      // }
+      const xx = await permit2.allowance(bob.address, usdcTokenAddress, DustCollectorAddress);
+      console.log(xx);
+      /* step 4: build swap commands & call collector */
+      console.log('📋 Step 4) Call DustCollector swap');
+
+      const abi      = AbiCoder.defaultAbiCoder();
+      const commands = '0x' + '00'.repeat(TOKENS.length);
+      const inputs   = TOKENS.map(tk =>
+        abi.encode(
+          ['address', 'uint256', 'uint256', 'bytes', 'bool'],
+          [DustCollectorAddress, tk.amtWei, 0, v3Path(tk.addr, usdtTokenAddress, tk.fee), false]
+        )
+      );
+      console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+      await daiToken.balanceOf(bob.address)+ ":"+
+      await usdcToken.balanceOf(bob.address)
+      );
+      const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+      const swapTx = await dust.batchCollectWithUniversalRouter(
+        {
+          commands,
+          inputs,
+          deadline:    Math.floor(Date.now() / 1e3) + 1800,
+          targetToken: usdtTokenAddress,
+          dstChain:    0,
+          recipient:   ZeroHash,
+          arbiterFee:  0
+        },
+        TOKENS.map(t => t.addr),
+        TOKENS.map(t => t.amtWei),
+        { 
+          // gasLimit: 1_000_000,
+          value: 0,
+        }
+      );
+    
+      console.log('⛓️  Swap  TxHash:', swapTx.hash);
+      const rc = await swapTx.wait();
+      console.log(
+        rc.status === 1
+          ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
+          : '❌ Swap FAILED'
+      );
+      console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+      await daiToken.balanceOf(bob.address)+ ":"+
+      await usdcToken.balanceOf(bob.address)
       );
 
-     await DustCollectorContract.connect(addr1).swapDustV3Uni([usdcTokenAddress], usdtTokenAddress);
-    console.log("after swap:" + await usdtToken.balanceOf(addr1.address) + ":"+
-    await daiToken.balanceOf(addr1.address)+ ":"+
-    await usdcToken.balanceOf(addr1.address)
-    );
 
+    //   /* ---------- 1. 逐币授权 ---------- */
+    //   for (const tk of TOKENS) {
+    //     tk.amtWei = parseUnits(tk.amt, tk.dec);          // BigInt 数量
+    //     await ensurePermit2(tk.addr, bob, tk.amtWei);
+    //   }
+    //   /* ---------- 2. 组装 UniversalRouter commands/inputs ---------- */
+    //   const abiCoder = AbiCoder.defaultAbiCoder();
+    //   let   commands = '';                               // 每个代币一条 0x00
+    //   const inputs   = [];
+
+    //   for (const tk of TOKENS) {
+    //     commands += '00';
+    //     inputs.push(
+    //       abiCoder.encode(
+    //         ['address','uint256','uint256','bytes','bool'],
+    //         [DustCollectorAddress, tk.amtWei, 0, v3Path(tk.addr, usdtTokenAddress, tk.fee), false]  // payerIsUser = false
+    //       )
+    //     );
+    //   }
+    //   commands  = '0x' + commands;
+    //   const deadline = Math.floor(Date.now() / 1e3) + 1800;  // 30 分钟
+
+    // /* ---------- 3. pullTokens & pullAmounts ---------- */
+    // const pullTokens  = TOKENS.map(t => t.addr);
+    // const pullAmounts = TOKENS.map(t => t.amtWei);
+    // /* ---------- 4. 调 DustCollector ---------- */
+    // const collector = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+    //   console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+    //   await daiToken.balanceOf(bob.address)+ ":"+
+    //   await usdcToken.balanceOf(bob.address)
+    //   );
+    // console.log('⏳  Sending transaction …');
+    // const tx = await collector.batchCollectWithUniversalRouter(
+    //   {
+    //     commands,
+    //     inputs,
+    //     deadline,
+    //     targetToken: usdtTokenAddress,
+    //     dstChain:    0,
+    //     recipient:   ZeroHash,
+    //     arbiterFee:  0
+    //   },
+    //   pullTokens,
+    //   pullAmounts,
+    //   { value: 0 }
+    // );
+
+    // console.log(`📨  Tx hash: ${tx.hash}`);
+    // const rc = await tx.wait();
+    // console.log(rc.status === 1 ? '✅  SUCCESS' : '❌  FAILED');
+
+    //   console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+    //   await daiToken.balanceOf(bob.address)+ ":"+
+    //   await usdcToken.balanceOf(bob.address)
+    //   );
     });
-
   });
 
 

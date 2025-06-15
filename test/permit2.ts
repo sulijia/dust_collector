@@ -98,7 +98,7 @@ export async function getPermitBatchSignature(
     permit.details[i].nonce = nextNonce
   }
 
-  return await signPermitBatch(permit, signer, permit2.address)
+  return await signPermitBatch(permit, signer, await permit2.getAddress())
 }
 
 export async function signPermitBatch(
