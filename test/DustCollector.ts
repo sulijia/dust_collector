@@ -589,12 +589,7 @@ async function ensurePermit2(token, owner, amount) {
       //   daiToken,
       //   usdcToken
       // )
-      // for (const tk of TOKENS) {
-      //   tk.amtWei = parseUnits(tk.amt, tk.dec);          // BigInt 数量
-      //   await ensurePermit2(tk.addr, bob, tk.amtWei);
-      // }
-      const xx = await permit2.allowance(bob.address, usdcTokenAddress, DustCollectorAddress);
-      console.log(xx);
+
       /* step 4: build swap commands & call collector */
       console.log('📋 Step 4) Call DustCollector swap');
 
