@@ -21,6 +21,8 @@ import {
   DEADLINE,
   V2_FACTORY_MAINNET,
   V3_FACTORY_MAINNET,
+  WORMHOLE_CORE_ADDRESS,
+  WORMHOLE_BRIDGE_ADDRESS,
 } from './const'
 import {
   deployUniversalRouter,
@@ -93,6 +95,9 @@ describe("Dust collector", function () {
   let permit2:any
   let permit2Address:any
   let WETHAddress:any
+  let nonfungiblePositionManager:any
+  let v3Factory:any
+  let nonfungiblePositionManagerAddress:any
 
   interface LinkReferences {
     [fileName: string]: {
@@ -180,24 +185,85 @@ describe("Dust collector", function () {
   * ② Permit2 → Collector 已授权。
   */
   async function ensurePermit2(token:string, owner:SignerWithAddress, amount:bigint) {
-  const erc20  = new ethers.Contract(token, MyToken.interface  , owner);
-  const permit = new ethers.Contract(permit2Address, permit2.interface, owner);
+    const erc20  = new ethers.Contract(token, MyToken.interface  , owner);
+    const permit = new ethers.Contract(permit2Address, permit2.interface, owner);
 
-  /* === 1. ERC20 → Permit2 === */
-  const curErc20Allow = await erc20.allowance(owner.address, permit2Address);
-  if (curErc20Allow < amount) {
-    console.log(`  · Approving ERC20 → Permit2   (${token})`);
-    await (await erc20.approve(permit2Address, MAX_UINT)).wait();
+    /* === 1. ERC20 → Permit2 === */
+    const curErc20Allow = await erc20.allowance(owner.address, permit2Address);
+    if (curErc20Allow < amount) {
+      console.log(`  · Approving ERC20 → Permit2   (${token})`);
+      await (await erc20.approve(permit2Address, MAX_UINT)).wait();
+    }
+
+    /* === 2. Permit2 → DustCollector === */
+    const [allowAmt] = await permit.allowance(owner.address, token, DustCollectorAddress);
+    if (allowAmt < amount) {
+      console.log(`  · Approving Permit2 → Collector (${token})`);
+      const maxUint160 = (1n << 160n) - 1n;               // 2¹⁶⁰-1
+      const expiration = Math.floor(Date.now() / 1e3) + 3600 * 24 * 30; // 30 天
+      await (await permit.approve(token, DustCollectorAddress, maxUint160, expiration)).wait();
+    }
   }
 
-  /* === 2. Permit2 → DustCollector === */
-  const [allowAmt] = await permit.allowance(owner.address, token, DustCollectorAddress);
-  if (allowAmt < amount) {
-    console.log(`  · Approving Permit2 → Collector (${token})`);
-    const maxUint160 = (1n << 160n) - 1n;               // 2¹⁶⁰-1
-    const expiration = Math.floor(Date.now() / 1e3) + 3600 * 24 * 30; // 30 天
-    await (await permit.approve(token, DustCollectorAddress, maxUint160, expiration)).wait();
-  }
+  async function createV3PoolAndAddLiquidity(tokenA:Token, tokenB:Token, poolFee:number, price:bigint, owner:SignerWithAddress, liquidity:number) {
+    await nonfungiblePositionManager.connect(owner).createAndInitializePoolIfNecessary(
+      tokenA.address,
+      tokenB.address,
+      poolFee,
+      price,
+      // { gasLimit: 5000000 }
+    )
+    const poolAddress = await v3Factory.connect(owner).getPool(
+      tokenA.address,
+      tokenB.address,
+      poolFee,
+    )
+    // addLiquidity
+    const poolContract = new ethers.Contract(poolAddress, artifacts.UniswapV3Pool.abi, owner)
+
+    let poolData = await getPoolData(poolContract)
+
+    let tokenAContract = new ethers.Contract(tokenA.address, usdtToken.interface, owner);
+    let tokenBContract = new ethers.Contract(tokenB.address, usdtToken.interface, owner);
+    await tokenAContract.approve(nonfungiblePositionManagerAddress, MAX_UINT);
+    await tokenBContract.approve(nonfungiblePositionManagerAddress, MAX_UINT);
+
+
+    const pool = new Pool(
+      tokenA,
+      tokenB,
+      Number(poolData.fee) as FeeAmount,
+      poolData.sqrtPriceX96.toString(),
+      poolData.liquidity.toString(),
+      Number(poolData.tick)
+    )
+
+    const position = new Position({
+      pool: pool,
+      liquidity: liquidity,
+      tickLower: nearestUsableTick(Number(poolData.tick), Number(poolData.tickSpacing)) - Number(poolData.tickSpacing) * 2,
+      tickUpper: nearestUsableTick(Number(poolData.tick),Number(poolData.tickSpacing)) + Number(poolData.tickSpacing) * 2,
+    })
+    const { amount0: amount0Desired, amount1: amount1Desired} = position.mintAmounts;
+
+    let params = {
+      token0: tokenA.address,
+      token1: tokenB.address,
+      fee: poolData.fee,
+      tickLower: nearestUsableTick(Number(poolData.tick), Number(poolData.tickSpacing)) - Number(poolData.tickSpacing) * 2,
+      tickUpper: nearestUsableTick(Number(poolData.tick), Number(poolData.tickSpacing)) + Number(poolData.tickSpacing) * 2,
+      amount0Desired: amount0Desired.toString(),
+      amount1Desired: amount1Desired.toString(),
+      amount0Min: 0,
+      amount1Min: 0,
+      recipient: owner.address,
+      deadline: Math.floor(Date.now() / 1000) + (60 * 10)
+    }
+
+    await nonfungiblePositionManager.connect(owner).mint(
+      params,
+      { gasLimit: '1000000' }
+    );
   }
 
   beforeEach(async () => {
@@ -249,8 +315,8 @@ describe("Dust collector", function () {
     permit2Address = await permit2.getAddress();
 
     // deploy uniswap v3 contract
-    let factory = new ethers.Contract(V3_FACTORY_MAINNET, artifacts.UniswapV3Factory.abi, alice);
-    let factoryAddress = await factory.getAddress();
+    v3Factory = new ethers.Contract(V3_FACTORY_MAINNET, artifacts.UniswapV3Factory.abi, alice);
+    let factoryAddress = await v3Factory.getAddress();
     let SwapRouter = new ContractFactory(artifacts.SwapRouter.abi, artifacts.SwapRouter.bytecode, alice);
     let swapRouter = await SwapRouter.deploy(factoryAddress, WETHAddress);
     let swapRouterAddress = await swapRouter.getAddress();
@@ -260,7 +326,7 @@ describe("Dust collector", function () {
     // DustCollectorContract = await DustCollector.deploy(UniswapV2RouterAddress, routerAddress, permit2Address, swapRouterAddress);
     // DustCollectorAddress = await DustCollectorContract.getAddress();
     const DustCollector = await ethers.getContractFactory("DustCollectorUniversalPermit2");
-    DustCollectorContract = await DustCollector.deploy(routerAddress,UniswapV2RouterAddress,UniswapV2RouterAddress, permit2Address, alice.address);
+    DustCollectorContract = await DustCollector.deploy(routerAddress,WORMHOLE_CORE_ADDRESS,WORMHOLE_BRIDGE_ADDRESS, permit2Address, alice.address);
     DustCollectorAddress = await DustCollectorContract.getAddress();
 
     // deploy v3 pool
@@ -293,68 +359,17 @@ describe("Dust collector", function () {
     let nonfungibleTokenPositionDescriptorAddress = await nonfungibleTokenPositionDescriptor.getAddress();
 
     let NonfungiblePositionManager = new ContractFactory(artifacts.NonfungiblePositionManager.abi, artifacts.NonfungiblePositionManager.bytecode, alice);
-    let nonfungiblePositionManager = await NonfungiblePositionManager.deploy(factoryAddress, WETHAddress, nonfungibleTokenPositionDescriptorAddress);
-    let nonfungiblePositionManagerAddress = await nonfungiblePositionManager.getAddress();
+    nonfungiblePositionManager = await NonfungiblePositionManager.deploy(factoryAddress, WETHAddress, nonfungibleTokenPositionDescriptorAddress);
+    nonfungiblePositionManagerAddress = await nonfungiblePositionManager.getAddress();
 
     // deploy v3 pool
     const price = encodePriceSqrt(1, 2);
     const poolFee = 500;
-    await nonfungiblePositionManager.connect(alice).createAndInitializePoolIfNecessary(
-      usdtTokenAddress,
-      usdcTokenAddress,
-      poolFee,
-      price,
-      // { gasLimit: 5000000 }
-    )
-    const poolAddress = await factory.connect(alice).getPool(
-      usdtTokenAddress,
-      usdcTokenAddress,
-      poolFee,
-    )
-    // addLiquidity
-    const poolContract = new ethers.Contract(poolAddress, artifacts.UniswapV3Pool.abi, alice)
-
-    let poolData = await getPoolData(poolContract)
-    await usdtToken.connect(alice).approve(nonfungiblePositionManagerAddress, MAX_UINT)
-    await usdcToken.connect(alice).approve(nonfungiblePositionManagerAddress, MAX_UINT)
-
-    const UsdtToken = new Token(1, usdtTokenAddress, 18, 'USDT', 'USDT')
-    const UsdcToken = new Token(1, usdcTokenAddress, 18, 'USDC', 'USDC')
-    const pool = new Pool(
-      UsdtToken,
-      UsdcToken,
-      Number(poolData.fee) as FeeAmount,
-      poolData.sqrtPriceX96.toString(),
-      poolData.liquidity.toString(),
-      Number(poolData.tick)
-    )
-
-    const position = new Position({
-      pool: pool,
-      liquidity: Number(ethers.parseEther('1')),
-      tickLower: nearestUsableTick(Number(poolData.tick), Number(poolData.tickSpacing)) - Number(poolData.tickSpacing) * 2,
-      tickUpper: nearestUsableTick(Number(poolData.tick),Number(poolData.tickSpacing)) + Number(poolData.tickSpacing) * 2,
-    })
-    const { amount0: amount0Desired, amount1: amount1Desired} = position.mintAmounts;
-
-    let params = {
-      token0: usdtTokenAddress,
-      token1: usdcTokenAddress,
-      fee: poolData.fee,
-      tickLower: nearestUsableTick(Number(poolData.tick), Number(poolData.tickSpacing)) - Number(poolData.tickSpacing) * 2,
-      tickUpper: nearestUsableTick(Number(poolData.tick), Number(poolData.tickSpacing)) + Number(poolData.tickSpacing) * 2,
-      amount0Desired: amount0Desired.toString(),
-      amount1Desired: amount1Desired.toString(),
-      amount0Min: 0,
-      amount1Min: 0,
-      recipient: alice.address,
-      deadline: Math.floor(Date.now() / 1000) + (60 * 10)
-    }
-
-    await nonfungiblePositionManager.connect(alice).mint(
-      params,
-      { gasLimit: '1000000' }
-    );
+    const tokenA = new Token(1, usdtTokenAddress, 18, 'USDT', 'USDT')
+    const tokenB = new Token(1, usdcTokenAddress, 18, 'USDC', 'USDC')
+    const tokenC = new Token(1, daiTokenAddress, 18, 'DAI', 'DAI')
+    await createV3PoolAndAddLiquidity(tokenA, tokenB, poolFee, price, alice, Number(ethers.parseEther('1')))
+    await createV3PoolAndAddLiquidity(tokenA, tokenC, poolFee, price, alice, Number(ethers.parseEther('1')))
   });
 
   describe("Test", function () {
@@ -362,7 +377,7 @@ describe("Dust collector", function () {
       const chainId  = 1;
       let TOKENS = [
         { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
-        // { addr: usdtTokenAddress, dec: 18, amt: '0.02', fee: 3000, amtWei: 0n }
+        { addr: daiTokenAddress, dec: 18, amt: '0.02', fee: 500, amtWei: 0n }
       ];
       /* step 0: prepare amounts */
       for (const tk of TOKENS) tk.amtWei = parseUnits(tk.amt, tk.dec);
@@ -451,7 +466,7 @@ describe("Dust collector", function () {
       const chainId  = 1;
       let TOKENS = [
         { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
-        // { addr: usdtTokenAddress, dec: 18, amt: '0.02', fee: 3000, amtWei: 0n }
+        { addr: daiTokenAddress, dec: 18, amt: '0.02', fee: 500, amtWei: 0n }
       ];
       /* step 0: prepare amounts */
       for (const tk of TOKENS) tk.amtWei = parseUnits(tk.amt, tk.dec);
