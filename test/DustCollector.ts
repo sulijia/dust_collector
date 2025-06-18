@@ -23,6 +23,7 @@ import {
   V3_FACTORY_MAINNET,
   WORMHOLE_CORE_ADDRESS,
   WORMHOLE_BRIDGE_ADDRESS,
+  ChainId,
 } from './const'
 import {
   deployUniversalRouter,
@@ -36,7 +37,8 @@ import {
 } from './planner'
 
 import {
-  getPermitSignature, PermitSingle,PermitBatch, PermitDetails,getPermitBatchSignature
+  getPermitSignature, PermitSingle,PermitBatch, PermitDetails,getPermitBatchSignature,
+  signPermit
 } from './permit2'
 
 import {
@@ -374,49 +376,52 @@ describe("Dust collector", function () {
   });
 
   describe("Test", function () {
+
+    async function signPerimit(TOKENS:any, owner:SignerWithAddress) {
+   /* step 0: prepare amounts */
+   for (const tk of TOKENS) tk.amtWei = parseUnits(tk.amt, tk.dec);
+   /* step 1: ERC20 -> Permit2 approvals */
+    console.log('📋 Step 1) ERC20 approvals');
+    for (const tk of TOKENS)
+      await ensureApproval(tk.addr, owner, permit2Address, tk.amtWei);
+
+    /* step 2: build batch-permit typed-data & sign */
+    console.log('\n📋 Step 2) Build & sign Permit2 batch');
+
+    const expiration  = Math.floor(Date.now() / 1e3) + 86400 * 30;   // 30d
+    const sigDeadline = Math.floor(Date.now() / 1e3) + 3600;        // 1h
+
+    const details:PermitDetails[] = [];
+    for (const tk of TOKENS) {
+      const [, , nonce] = await permit2.allowance(owner.address, tk.addr, DustCollectorAddress);
+      details.push({ token: tk.addr, amount: tk.amtWei, expiration, nonce });
+    }
+    const permitBatch:PermitBatch = { details, spender: DustCollectorAddress, sigDeadline };
+
+    const domain = { name: 'Permit2', chainId:ChainId, verifyingContract: permit2Address };
+    const types  = {
+      PermitBatch:   [{ name: 'details', type: 'PermitDetails[]' }, { name: 'spender', type: 'address' }, { name: 'sigDeadline', type: 'uint256' }],
+      PermitDetails: [{ name: 'token', type: 'address' }, { name: 'amount', type: 'uint160' }, { name: 'expiration', type: 'uint48' }, { name: 'nonce', type: 'uint48' }]
+    };
+
+    // console.log('📝 TypedData:\n', toJson({ domain, types, permitBatch }), '\n');
+    const signature = await owner.signTypedData(domain, types, permitBatch);
+    console.log('🔑 Signature:', signature, '\n');
+
+    /* step 3: send permit tx */
+    console.log('📋 Step 3) Send permit() tx');
+    const permitTx = await permit2["permit(address,((address,uint160,uint48,uint48)[],address,uint256),bytes)"](owner.address, permitBatch, signature);
+    console.log('⛓️  Permit TxHash:', permitTx.hash);
+    await permitTx.wait();
+    console.log('✅ Permit tx confirmed\n');
+    }
+
     it("uniswap v3 test 1", async function () {
-      const chainId  = 1;
       let TOKENS = [
         { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
         { addr: daiTokenAddress, dec: 18, amt: '0.02', fee: 500, amtWei: 0n }
       ];
-      /* step 0: prepare amounts */
-      for (const tk of TOKENS) tk.amtWei = parseUnits(tk.amt, tk.dec);
-       /* step 1: ERC20 -> Permit2 approvals */
-      console.log('📋 Step 1) ERC20 approvals');
-      for (const tk of TOKENS)
-        await ensureApproval(tk.addr, bob, permit2Address, tk.amtWei);
-
-      /* step 2: build batch-permit typed-data & sign */
-      console.log('\n📋 Step 2) Build & sign Permit2 batch');
-
-      const expiration  = Math.floor(Date.now() / 1e3) + 86400 * 30;   // 30d
-      const sigDeadline = Math.floor(Date.now() / 1e3) + 3600;        // 1h
-
-      const details:PermitDetails[] = [];
-      for (const tk of TOKENS) {
-        const [, , nonce] = await permit2.allowance(bob.address, tk.addr, DustCollectorAddress);
-        details.push({ token: tk.addr, amount: tk.amtWei, expiration, nonce });
-      }
-      const permitBatch:PermitBatch = { details, spender: DustCollectorAddress, sigDeadline };
-
-      const domain = { name: 'Permit2', chainId, verifyingContract: permit2Address };
-      const types  = {
-        PermitBatch:   [{ name: 'details', type: 'PermitDetails[]' }, { name: 'spender', type: 'address' }, { name: 'sigDeadline', type: 'uint256' }],
-        PermitDetails: [{ name: 'token', type: 'address' }, { name: 'amount', type: 'uint160' }, { name: 'expiration', type: 'uint48' }, { name: 'nonce', type: 'uint48' }]
-      };
-
-      console.log('📝 TypedData:\n', toJson({ domain, types, permitBatch }), '\n');
-      const signature = await bob.signTypedData(domain, types, permitBatch);
-      console.log('🔑 Signature:', signature, '\n');
-
-      /* step 3: send permit tx */
-      console.log('📋 Step 3) Send permit() tx');
-      const permitTx = await permit2["permit(address,((address,uint160,uint48,uint48)[],address,uint256),bytes)"](bob.address, permitBatch, signature);
-      console.log('⛓️  Permit TxHash:', permitTx.hash);
-      await permitTx.wait();
-      console.log('✅ Permit tx confirmed\n');
-
+      await signPerimit(TOKENS, bob);
       /* step 4: build swap commands & call collector */
       console.log('📋 Step 4) Call DustCollector swap');
 
@@ -464,7 +469,6 @@ describe("Dust collector", function () {
     });
 
     it("uniswap v3 test 2", async function () {
-      const chainId  = 1;
       let TOKENS = [
         { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
         { addr: daiTokenAddress, dec: 18, amt: '0.02', fee: 500, amtWei: 0n }
@@ -529,47 +533,11 @@ describe("Dust collector", function () {
 
     // tokenA->tokenB->tokenC
     it("uniswap v3 test 3", async function () {
-      const chainId  = 1;
       let TOKENS = [
         { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
       ];
-      /* step 0: prepare amounts */
-      for (const tk of TOKENS) tk.amtWei = parseUnits(tk.amt, tk.dec);
-       /* step 1: ERC20 -> Permit2 approvals */
-      console.log('📋 Step 1) ERC20 approvals');
-      for (const tk of TOKENS)
-        await ensureApproval(tk.addr, bob, permit2Address, tk.amtWei);
 
-      /* step 2: build batch-permit typed-data & sign */
-      console.log('\n📋 Step 2) Build & sign Permit2 batch');
-
-      const expiration  = Math.floor(Date.now() / 1e3) + 86400 * 30;   // 30d
-      const sigDeadline = Math.floor(Date.now() / 1e3) + 3600;        // 1h
-
-      const details:PermitDetails[] = [];
-      for (const tk of TOKENS) {
-        const [, , nonce] = await permit2.allowance(bob.address, tk.addr, DustCollectorAddress);
-        details.push({ token: tk.addr, amount: tk.amtWei, expiration, nonce });
-      }
-      const permitBatch:PermitBatch = { details, spender: DustCollectorAddress, sigDeadline };
-
-      const domain = { name: 'Permit2', chainId, verifyingContract: permit2Address };
-      const types  = {
-        PermitBatch:   [{ name: 'details', type: 'PermitDetails[]' }, { name: 'spender', type: 'address' }, { name: 'sigDeadline', type: 'uint256' }],
-        PermitDetails: [{ name: 'token', type: 'address' }, { name: 'amount', type: 'uint160' }, { name: 'expiration', type: 'uint48' }, { name: 'nonce', type: 'uint48' }]
-      };
-
-      console.log('📝 TypedData:\n', toJson({ domain, types, permitBatch }), '\n');
-      const signature = await bob.signTypedData(domain, types, permitBatch);
-      console.log('🔑 Signature:', signature, '\n');
-
-      /* step 3: send permit tx */
-      console.log('📋 Step 3) Send permit() tx');
-      const permitTx = await permit2["permit(address,((address,uint160,uint48,uint48)[],address,uint256),bytes)"](bob.address, permitBatch, signature);
-      console.log('⛓️  Permit TxHash:', permitTx.hash);
-      await permitTx.wait();
-      console.log('✅ Permit tx confirmed\n');
-
+      await signPerimit(TOKENS, bob);
       /* step 4: build swap commands & call collector */
       console.log('📋 Step 4) Call DustCollector swap');
 
