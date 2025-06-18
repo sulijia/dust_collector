@@ -13,6 +13,7 @@ import {
   V3_NFT_POSITION_MANAGER_MAINNET,
   V4_POSITION_DESCRIPTOR_ADDRESS,
   WETH_MAINNET,
+  FeeAmount,
 } from './const'
 
 export async function deployV4PoolManager(owner: string): Promise<any> {
@@ -73,3 +74,29 @@ export async function deployUniversalRouter(
 export const PERMIT2 = new ethers.Contract(PERMIT2_ADDRESS, PERMIT2_ABI)
 
 export default deployUniversalRouter
+
+export function getFeeTier(tokenA: string, tokenB: string): number {
+  return 500;
+}
+
+const FEE_SIZE = 3
+
+// v3
+export function encodePath(path: string[]): string {
+  let encoded = '0x'
+  for (let i = 0; i < path.length - 1; i++) {
+    // 20 byte encoding of the address
+    encoded += path[i].slice(2)
+    // 3 byte encoding of the fee
+    encoded += getFeeTier(path[i], path[i + 1])
+      .toString(16)
+      .padStart(2 * FEE_SIZE, '0')
+  }
+  // encode the final token
+  encoded += path[path.length - 1].slice(2)
+  return encoded.toLowerCase();
+}
+
+export function encodePathExactInput(tokens: string[]): string {
+  return encodePath(tokens)
+}

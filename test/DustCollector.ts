@@ -27,6 +27,7 @@ import {
 import {
   deployUniversalRouter,
   PERMIT2,
+  encodePathExactInput,
 } from './helper'
 
 import {
@@ -524,6 +525,95 @@ describe("Dust collector", function () {
     await daiToken.balanceOf(bob.address)+ ":"+
     await usdcToken.balanceOf(bob.address)
     );
+    });
+
+    // tokenA->tokenB->tokenC
+    it("uniswap v3 test 3", async function () {
+      const chainId  = 1;
+      let TOKENS = [
+        { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+      ];
+      /* step 0: prepare amounts */
+      for (const tk of TOKENS) tk.amtWei = parseUnits(tk.amt, tk.dec);
+       /* step 1: ERC20 -> Permit2 approvals */
+      console.log('📋 Step 1) ERC20 approvals');
+      for (const tk of TOKENS)
+        await ensureApproval(tk.addr, bob, permit2Address, tk.amtWei);
+
+      /* step 2: build batch-permit typed-data & sign */
+      console.log('\n📋 Step 2) Build & sign Permit2 batch');
+
+      const expiration  = Math.floor(Date.now() / 1e3) + 86400 * 30;   // 30d
+      const sigDeadline = Math.floor(Date.now() / 1e3) + 3600;        // 1h
+
+      const details:PermitDetails[] = [];
+      for (const tk of TOKENS) {
+        const [, , nonce] = await permit2.allowance(bob.address, tk.addr, DustCollectorAddress);
+        details.push({ token: tk.addr, amount: tk.amtWei, expiration, nonce });
+      }
+      const permitBatch:PermitBatch = { details, spender: DustCollectorAddress, sigDeadline };
+
+      const domain = { name: 'Permit2', chainId, verifyingContract: permit2Address };
+      const types  = {
+        PermitBatch:   [{ name: 'details', type: 'PermitDetails[]' }, { name: 'spender', type: 'address' }, { name: 'sigDeadline', type: 'uint256' }],
+        PermitDetails: [{ name: 'token', type: 'address' }, { name: 'amount', type: 'uint160' }, { name: 'expiration', type: 'uint48' }, { name: 'nonce', type: 'uint48' }]
+      };
+
+      console.log('📝 TypedData:\n', toJson({ domain, types, permitBatch }), '\n');
+      const signature = await bob.signTypedData(domain, types, permitBatch);
+      console.log('🔑 Signature:', signature, '\n');
+
+      /* step 3: send permit tx */
+      console.log('📋 Step 3) Send permit() tx');
+      const permitTx = await permit2["permit(address,((address,uint160,uint48,uint48)[],address,uint256),bytes)"](bob.address, permitBatch, signature);
+      console.log('⛓️  Permit TxHash:', permitTx.hash);
+      await permitTx.wait();
+      console.log('✅ Permit tx confirmed\n');
+
+      /* step 4: build swap commands & call collector */
+      console.log('📋 Step 4) Call DustCollector swap');
+
+      const abi      = AbiCoder.defaultAbiCoder();
+      const commands = '0x' + '00'.repeat(TOKENS.length);
+      const inputs   = TOKENS.map(tk =>
+        abi.encode(
+          ['address', 'uint256', 'uint256', 'bytes', 'bool'],
+          [DustCollectorAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, usdtTokenAddress, daiTokenAddress]), false]
+        )
+      );
+      console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+      await daiToken.balanceOf(bob.address)+ ":"+
+      await usdcToken.balanceOf(bob.address)
+      );
+      const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+      const swapTx = await dust.batchCollectWithUniversalRouter(
+        {
+          commands,
+          inputs,
+          deadline:    Math.floor(Date.now() / 1e3) + 1800,
+          targetToken: daiTokenAddress,
+          dstChain:    0,
+          recipient:   ZeroHash,
+          arbiterFee:  0
+        },
+        TOKENS.map(t => t.addr),
+        TOKENS.map(t => t.amtWei),
+        {
+          // gasLimit: 1_000_000,
+          value: 0,
+        }
+      );
+      console.log('⛓️  Swap  TxHash:', swapTx.hash);
+      const rc = await swapTx.wait();
+      console.log(
+        rc.status === 1
+          ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
+          : '❌ Swap FAILED'
+      );
+      console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+      await daiToken.balanceOf(bob.address)+ ":"+
+      await usdcToken.balanceOf(bob.address)
+      );
     });
 
   });
