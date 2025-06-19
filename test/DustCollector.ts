@@ -101,6 +101,7 @@ describe("Dust collector", function () {
   let nonfungiblePositionManager:any
   let v3Factory:any
   let nonfungiblePositionManagerAddress:any
+  let WETHContract:any
 
   interface LinkReferences {
     [fileName: string]: {
@@ -286,9 +287,11 @@ describe("Dust collector", function () {
     daiTokenAddress = await daiToken.getAddress();
     usdtTokenAddress = await usdtToken.getAddress();
     usdcTokenAddress = await usdcToken.getAddress();
-    const WETH9v2 = new ContractFactory(WETH9.abi, WETH9.bytecode, alice);
-    const WETHContractv2 = await WETH9v2.deploy();
-    WETHAddress = await WETHContractv2.getAddress();
+
+    WETHContract = new ethers.Contract(WETH.address ,WETH9.abi, alice);
+    WETHAddress = await WETHContract.getAddress();
+    // alice deposit eth
+    await WETHContract.deposit({ value: ethers.parseUnits("10", "ether") })
 
     // deploy uniswap v2 contract
     UniswapV2FactoryContract = new ethers.Contract(V2_FACTORY_MAINNET, UniswapV2Factoryx.abi, bob)
@@ -366,13 +369,16 @@ describe("Dust collector", function () {
     nonfungiblePositionManagerAddress = await nonfungiblePositionManager.getAddress();
 
     // deploy v3 pool
-    const price = encodePriceSqrt(1, 2);
+    let price = encodePriceSqrt(1, 2);
     const poolFee = 500;
     const tokenA = new Token(1, usdtTokenAddress, 18, 'USDT', 'USDT')
     const tokenB = new Token(1, usdcTokenAddress, 18, 'USDC', 'USDC')
     const tokenC = new Token(1, daiTokenAddress, 18, 'DAI', 'DAI')
+    const tokenD = new Token(1, WETHAddress, 18, 'WETH', 'WETH')
     await createV3PoolAndAddLiquidity(tokenA, tokenB, poolFee, price, alice, Number(ethers.parseEther('1')))
     await createV3PoolAndAddLiquidity(tokenA, tokenC, poolFee, price, alice, Number(ethers.parseEther('1')))
+    price = encodePriceSqrt(1000, 1);
+    await createV3PoolAndAddLiquidity(tokenC, tokenD, poolFee, price, alice, Number(ethers.parseEther('1')))
   });
 
   describe("Test", function () {
@@ -583,6 +589,67 @@ describe("Dust collector", function () {
       await usdcToken.balanceOf(bob.address)
       );
     });
+    // erc20->eth
+    it("uniswap v3 test 4", async function () {
+      let TOKENS = [
+        { addr: daiTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+      ];
+
+      await signPerimit(TOKENS, bob);
+      /* step 4: build swap commands & call collector */
+      console.log('📋 Step 4) Call DustCollector swap');
+
+      const abi      = AbiCoder.defaultAbiCoder();
+      const commands = '0x' + '00'.repeat(TOKENS.length);
+      const inputs   = TOKENS.map(tk =>
+        abi.encode(
+          ['address', 'uint256', 'uint256', 'bytes', 'bool'],
+          [DustCollectorAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, WETHAddress]), false]
+        )
+      );
+      console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+      await daiToken.balanceOf(bob.address)+ ":"+
+      await usdcToken.balanceOf(bob.address) + ":"+
+      await WETHContract.balanceOf(bob.address)
+      );
+      const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+      const swapTx = await dust.batchCollectWithUniversalRouter(
+        {
+          commands,
+          inputs,
+          deadline:    Math.floor(Date.now() / 1e3) + 1800,
+          targetToken: WETHAddress,
+          dstChain:    0,
+          recipient:   ZeroHash,
+          arbiterFee:  0
+        },
+        TOKENS.map(t => t.addr),
+        TOKENS.map(t => t.amtWei),
+        {
+          // gasLimit: 1_000_000,
+          value: 0,
+        }
+      );
+      console.log('⛓️  Swap  TxHash:', swapTx.hash);
+      const rc = await swapTx.wait();
+      console.log(
+        rc.status === 1
+          ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
+          : '❌ Swap FAILED'
+      );
+      console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+      await daiToken.balanceOf(bob.address)+ ":"+
+      await usdcToken.balanceOf(bob.address) + ":"+
+      await WETHContract.balanceOf(bob.address)
+      );
+      await WETHContract.connect(bob).withdraw(await WETHContract.balanceOf(bob.address));
+      console.log("after withdraw:" + await usdtToken.balanceOf(bob.address) + ":"+
+      await daiToken.balanceOf(bob.address)+ ":"+
+      await usdcToken.balanceOf(bob.address) + ":"+
+      await WETHContract.balanceOf(bob.address)
+      );
+    });
+
 
   });
 });
