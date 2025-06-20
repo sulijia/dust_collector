@@ -302,7 +302,7 @@ describe("Dust collector", function () {
 
     // mint test erc20 token, transfer token to test address.
     const MAX_MINT = BigInt("100000000000000000000000000000");
-    const INIT_AMOUNT = BigInt("100000000000000000000");
+    const INIT_AMOUNT = BigInt("1000000000000000000000");
     await daiToken.mint(alice.address, MAX_MINT);
     await usdtToken.mint(alice.address, MAX_MINT);
     await usdcToken.mint(alice.address, MAX_MINT);
@@ -327,10 +327,6 @@ describe("Dust collector", function () {
     let swapRouter = await SwapRouter.deploy(factoryAddress, WETHAddress);
     let swapRouterAddress = await swapRouter.getAddress();
 
-    // deploy dust collector contract
-    // const DustCollector = await ethers.getContractFactory("DustCollector");
-    // DustCollectorContract = await DustCollector.deploy(UniswapV2RouterAddress, routerAddress, permit2Address, swapRouterAddress);
-    // DustCollectorAddress = await DustCollectorContract.getAddress();
     const DustCollector = await ethers.getContractFactory("DustCollectorUniversalPermit2");
     DustCollectorContract = await DustCollector.deploy(routerAddress,WORMHOLE_CORE_ADDRESS,WORMHOLE_BRIDGE_ADDRESS, permit2Address, alice.address);
     DustCollectorAddress = await DustCollectorContract.getAddress();
@@ -379,6 +375,16 @@ describe("Dust collector", function () {
     await createV3PoolAndAddLiquidity(tokenA, tokenC, poolFee, price, alice, Number(ethers.parseEther('1')))
     price = encodePriceSqrt(1000, 1);
     await createV3PoolAndAddLiquidity(tokenC, tokenD, poolFee, price, alice, Number(ethers.parseEther('1')))
+    // deploy v2 pool
+    let start_at = new Date().getTime();
+    await UniswapV2Router02Contract.addLiquidity(daiTokenAddress,usdtTokenAddress,
+        BigInt(ethers.parseEther('100')), BigInt(ethers.parseEther('100')),
+        0, 0,
+      alice.address, start_at);
+    await UniswapV2Router02Contract.addLiquidity(usdcTokenAddress,usdtTokenAddress,
+      BigInt(ethers.parseEther('100')), BigInt(ethers.parseEther('100')),
+      0, 0,
+        alice.address, start_at);
   });
 
   describe("Test", function () {
@@ -647,6 +653,59 @@ describe("Dust collector", function () {
       await daiToken.balanceOf(bob.address)+ ":"+
       await usdcToken.balanceOf(bob.address) + ":"+
       await WETHContract.balanceOf(bob.address)
+      );
+    });
+
+    // tokenA->tokenB->tokenC
+    it("uniswap v2 test 1", async function () {
+     let TOKENS = [
+        { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+      ];
+
+      await signPerimit(TOKENS, bob);
+      /* step 4: build swap commands & call collector */
+      console.log('📋 Step 4) Call DustCollector swap');
+
+      const abi      = AbiCoder.defaultAbiCoder();
+      const commands = '0x' + '08'.repeat(TOKENS.length);
+      const inputs   = TOKENS.map(tk =>
+        abi.encode(
+          ['address', 'uint256', 'uint256', 'address[]', 'bool'],
+          [DustCollectorAddress, tk.amtWei, 0, [tk.addr, usdtTokenAddress, daiTokenAddress], false]
+        )
+      );
+      console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+      await daiToken.balanceOf(bob.address)+ ":"+
+      await usdcToken.balanceOf(bob.address)
+      );
+      const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+      const swapTx = await dust.batchCollectWithUniversalRouter(
+        {
+          commands,
+          inputs,
+          deadline:    Math.floor(Date.now() / 1e3) + 1800,
+          targetToken: daiTokenAddress,
+          dstChain:    0,
+          recipient:   ZeroHash,
+          arbiterFee:  0
+        },
+        TOKENS.map(t => t.addr),
+        TOKENS.map(t => t.amtWei),
+        {
+          // gasLimit: 1_000_000,
+          value: 0,
+        }
+      );
+      console.log('⛓️  Swap  TxHash:', swapTx.hash);
+      const rc = await swapTx.wait();
+      console.log(
+        rc.status === 1
+          ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
+          : '❌ Swap FAILED'
+      );
+      console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+      await daiToken.balanceOf(bob.address)+ ":"+
+      await usdcToken.balanceOf(bob.address)
       );
     });
 
