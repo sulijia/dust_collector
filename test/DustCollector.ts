@@ -709,6 +709,73 @@ describe("Dust collector", function () {
       );
     });
 
+    // tokenA->tokenB->tokenC
+    it("Mix uniswap v2 v3 test 1", async function () {
+     let TOKENS = [
+        { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+      ];
+
+      await signPerimit(TOKENS, bob);
+      /* step 4: build swap commands & call collector */
+      console.log('📋 Step 4) Call DustCollector swap');
+
+      const abi      = AbiCoder.defaultAbiCoder();
+      let   commands = '';
+      const inputs   = [];
+
+      for (const tk of TOKENS) {
+        commands += '00';
+        inputs.push(
+          abi.encode(
+            ['address','uint256','uint256','bytes','bool'],
+            [DustCollectorAddress, tk.amtWei/BigInt(2), 0, encodePathExactInput([tk.addr, usdtTokenAddress, daiTokenAddress]), false]  // payerIsUser = false
+          )
+        );
+      }
+      for (const tk of TOKENS) {
+        commands += '08';
+        inputs.push(
+        abi.encode(
+          ['address', 'uint256', 'uint256', 'address[]', 'bool'],
+          [DustCollectorAddress, tk.amtWei/BigInt(2), 0, [tk.addr, usdtTokenAddress, daiTokenAddress], false]
+        )
+        );
+      }
+      commands  = '0x' + commands;
+      console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+      await daiToken.balanceOf(bob.address)+ ":"+
+      await usdcToken.balanceOf(bob.address)
+      );
+      const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+      const swapTx = await dust.batchCollectWithUniversalRouter(
+        {
+          commands,
+          inputs,
+          deadline:    Math.floor(Date.now() / 1e3) + 1800,
+          targetToken: daiTokenAddress,
+          dstChain:    0,
+          recipient:   ZeroHash,
+          arbiterFee:  0
+        },
+        TOKENS.map(t => t.addr),
+        TOKENS.map(t => t.amtWei),
+        {
+          // gasLimit: 1_000_000,
+          value: 0,
+        }
+      );
+      console.log('⛓️  Swap  TxHash:', swapTx.hash);
+      const rc = await swapTx.wait();
+      console.log(
+        rc.status === 1
+          ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
+          : '❌ Swap FAILED'
+      );
+      console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+      await daiToken.balanceOf(bob.address)+ ":"+
+      await usdcToken.balanceOf(bob.address)
+      );
+    });
 
   });
 });
