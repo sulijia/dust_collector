@@ -29,6 +29,7 @@ interface IPermit2 {
         uint160 amount,
         address token
     ) external;
+    function approve(address token, address spender, uint160 amount, uint48 expiration) external;
 }
 
 /* ───────────── 主合约 ───────────── */
@@ -108,15 +109,21 @@ contract DustCollectorUniversalPermit2 is Ownable {
     /* -------- internal: pull & forward -------- */
     function _pullAndForward(address[] calldata tokens, uint256[] calldata amounts) internal {
         for (uint256 i; i < tokens.length; ++i) {
-            // 1. 从用户拉币（使用 Permit2）
+            // // 1. 从用户拉币（使用 Permit2）
+            // permit2.transferFrom(
+            //     msg.sender,
+            //     address(this),
+            //     uint160(amounts[i]),
+            //     tokens[i]
+            // );
+            // // 2. 转给 Router
+            // IERC20(tokens[i]).safeTransfer(address(router), amounts[i]);
             permit2.transferFrom(
                 msg.sender,
-                address(this),
+                address(router),
                 uint160(amounts[i]),
                 tokens[i]
             );
-            // 2. 转给 Router
-            IERC20(tokens[i]).safeTransfer(address(router), amounts[i]);
         }
     }
 

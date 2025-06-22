@@ -10,7 +10,7 @@ import { Pool, Position, nearestUsableTick,FeeAmount } from '@uniswap/v3-sdk'
 import { abi as TOKEN_ABI } from './solmate/src/tokens/ERC20.sol/ERC20.json'
 import hre from 'hardhat'
 import { SignerWithAddress } from '@nomicfoundation/hardhat-ethers/signers'
-import {ContractFactory, parseUnits, solidityPacked, AbiCoder, ZeroHash, Contract} from 'ethers'
+import {ContractFactory, parseUnits, solidityPacked, AbiCoder, ZeroHash, Contract, assert} from 'ethers'
 import {
   ALICE_ADDRESS,
   DAI,
@@ -776,6 +776,82 @@ describe("Dust collector", function () {
       await usdcToken.balanceOf(bob.address)
       );
     });
+  it("uniswap v3 unwrap weth test", async function () {
+      let TOKENS = [
+        { addr: daiTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+      ];
+
+      await signPerimit(TOKENS, bob);
+      /* step 4: build swap commands & call collector */
+      console.log('📋 Step 4) Call DustCollector swap');
+
+      const abi      = AbiCoder.defaultAbiCoder();
+      let   commands = '0x';
+      const inputs   = [];
+      commands += '0b';
+      // for test,transfer eth to UniversalRouter
+      inputs.push(
+          abi.encode(
+            ['address','uint256'],
+            [routerAddress, ethers.parseEther('1')]
+          )
+      );
+      for (const tk of TOKENS) {
+        commands += '00';
+        inputs.push(
+          abi.encode(
+            ['address','uint256','uint256','bytes','bool'],
+            [DustCollectorAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, WETHAddress]), false]  // payerIsUser = false
+          )
+        );
+      }
+      commands += '0c';
+      inputs.push(
+          abi.encode(
+            ['address','uint256'],
+            [DustCollectorAddress, 0]
+          )
+      );
+      console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+      await daiToken.balanceOf(bob.address)+ ":"+
+      await usdcToken.balanceOf(bob.address) + ":"+
+      await WETHContract.balanceOf(bob.address) + ":"+
+      await WETHContract.balanceOf(DustCollectorAddress)
+      );
+      const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+      const swapTx = await dust.batchCollectWithUniversalRouter(
+        {
+          commands,
+          inputs,
+          deadline:    Math.floor(Date.now() / 1e3) + 1800,
+          targetToken: WETHAddress,
+          dstChain:    0,
+          recipient:   ZeroHash,
+          arbiterFee:  0
+        },
+        TOKENS.map(t => t.addr),
+        TOKENS.map(t => t.amtWei),
+        {
+          // gasLimit: 1_000_000,
+          value: ethers.parseEther('1'),
+        }
+      );
+      console.log('⛓️  Swap  TxHash:', swapTx.hash);
+      const rc = await swapTx.wait();
+      console.log(
+        rc.status === 1
+          ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
+          : '❌ Swap FAILED'
+      );
+      console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+      await daiToken.balanceOf(bob.address)+ ":"+
+      await usdcToken.balanceOf(bob.address) + ":"+
+      await WETHContract.balanceOf(bob.address) + ":"+
+      await WETHContract.balanceOf(DustCollectorAddress)
+      );
+      expect(await ethers.provider.getBalance(DustCollectorAddress)).to.be.eq(ethers.parseEther('1'))
+  });
+
 
   });
 });
