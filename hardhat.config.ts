@@ -15,6 +15,13 @@ const config: HardhatUserConfig = {
         blockNumber: 20010000,
       },
     },
+    sepolia: {
+          url: process.env.EVM_RPC!,
+          chainId: 11155111,
+          accounts: [
+              process.env.PRIVATE!,
+          ]
+    },
   },
 };
 export default config;
