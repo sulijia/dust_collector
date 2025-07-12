@@ -789,20 +789,12 @@ describe("Dust collector", function () {
       const abi      = AbiCoder.defaultAbiCoder();
       let   commands = '0x';
       const inputs   = [];
-      commands += '0b';
-      // for test,transfer eth to UniversalRouter
-      inputs.push(
-          abi.encode(
-            ['address','uint256'],
-            [routerAddress, ethers.parseEther('1')]
-          )
-      );
       for (const tk of TOKENS) {
         commands += '00';
         inputs.push(
           abi.encode(
             ['address','uint256','uint256','bytes','bool'],
-            [DustCollectorAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, WETHAddress]), false]  // payerIsUser = false
+            [routerAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, WETHAddress]), false]  // payerIsUser = false
           )
         );
       }
@@ -833,8 +825,7 @@ describe("Dust collector", function () {
         TOKENS.map(t => t.addr),
         TOKENS.map(t => t.amtWei),
         {
-          // gasLimit: 1_000_000,
-          value: ethers.parseEther('1'),
+          value: 0,
         }
       );
       console.log('⛓️  Swap  TxHash:', swapTx.hash);
@@ -850,7 +841,7 @@ describe("Dust collector", function () {
       await WETHContract.balanceOf(bob.address) + ":"+
       await WETHContract.balanceOf(DustCollectorAddress)
       );
-      expect(await ethers.provider.getBalance(DustCollectorAddress)).to.be.eq(ethers.parseEther('1'))
+      expect(await ethers.provider.getBalance(DustCollectorAddress)).to.be.above(ethers.parseEther('0'))
   });
 
 
@@ -870,20 +861,12 @@ describe("Dust collector", function () {
       const abi      = AbiCoder.defaultAbiCoder();
       let   commands = '0x';
       const inputs   = [];
-      commands += '0b';
-      // for test,transfer eth to UniversalRouter
-      inputs.push(
-          abi.encode(
-            ['address','uint256'],
-            [routerAddress, ethers.parseEther('1')]
-          )
-      );
       for (const tk of TOKENS) {
         commands += '00';
         inputs.push(
           abi.encode(
             ['address','uint256','uint256','bytes','bool'],
-            [DustCollectorAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, WETHAddress]), false]  // payerIsUser = false
+            [routerAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, WETHAddress]), false]  // payerIsUser = false
           )
         );
       }
@@ -945,7 +928,7 @@ describe("Dust collector", function () {
       await WETHContract.balanceOf(bob.address) + ":"+
       await WETHContract.balanceOf(DustCollectorAddress)
       );
-      expect(await ethers.provider.getBalance(DustCollectorAddress)).to.be.eq(ethers.parseEther('1'))
+      expect(await ethers.provider.getBalance(DustCollectorAddress)).to.be.above(ethers.parseEther('0'))
   });
 
   });

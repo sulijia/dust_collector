@@ -100,3 +100,19 @@ export function encodePath(path: string[]): string {
 export function encodePathExactInput(tokens: string[]): string {
   return encodePath(tokens)
 }
+
+// v3
+export function encodePathAndFee(path: string[], fee: number[]): string {
+  let encoded = '0x'
+  for (let i = 0; i < path.length - 1; i++) {
+    // 20 byte encoding of the address
+    encoded += path[i].slice(2)
+    // 3 byte encoding of the fee
+    encoded += fee[i]
+      .toString(16)
+      .padStart(2 * FEE_SIZE, '0')
+  }
+  // encode the final token
+  encoded += path[path.length - 1].slice(2)
+  return encoded.toLowerCase();
+}

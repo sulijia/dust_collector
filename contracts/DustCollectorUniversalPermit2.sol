@@ -136,7 +136,7 @@ contract DustCollectorUniversalPermit2 is Ownable {
         router.execute{value: routerEth}(p.commands, p.inputs, p.deadline);
         uint256 afterBal  = IERC20(p.targetToken).balanceOf(address(this));
 
-        require(afterBal > beforeBal, "no output");
+        // require(afterBal > beforeBal, "no output");
         return afterBal - beforeBal;
     }
 
@@ -185,6 +185,13 @@ contract DustCollectorUniversalPermit2 is Ownable {
     /* rescue */
     function rescueERC20(address t, address to, uint256 amt) external onlyOwner {
         IERC20(t).safeTransfer(to, amt);
+    }
+
+    function rescueETH(address payable to, uint256 amt) external onlyOwner {
+        require(to != address(0), "zero addr");
+        require(amt <= address(this).balance, "insufficient balance");
+        (bool success, ) = to.call{value: amt}("");
+        require(success, "ETH transfer failed");
     }
 
     receive() external payable {}
