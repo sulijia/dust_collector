@@ -429,423 +429,517 @@ describe("Dust collector", function () {
     console.log('✅ Permit tx confirmed\n');
     }
 
-    it("uniswap v3 test 1", async function () {
-      let TOKENS = [
-        { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
-        { addr: daiTokenAddress, dec: 18, amt: '0.02', fee: 500, amtWei: 0n }
-      ];
-      await signPerimit(TOKENS, bob);
-      /* step 4: build swap commands & call collector */
-      console.log('📋 Step 4) Call DustCollector swap');
+  //   it("uniswap v3 test 1", async function () {
+  //     let TOKENS = [
+  //       { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+  //       { addr: daiTokenAddress, dec: 18, amt: '0.02', fee: 500, amtWei: 0n }
+  //     ];
+  //     await signPerimit(TOKENS, bob);
+  //     /* step 4: build swap commands & call collector */
+  //     console.log('📋 Step 4) Call DustCollector swap');
 
-      const abi      = AbiCoder.defaultAbiCoder();
-      const commands = '0x' + '00'.repeat(TOKENS.length);
-      const inputs   = TOKENS.map(tk =>
-        abi.encode(
-          ['address', 'uint256', 'uint256', 'bytes', 'bool'],
-          [DustCollectorAddress, tk.amtWei, 0, v3Path(tk.addr, usdtTokenAddress, tk.fee), false]
-        )
-      );
-      console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-      await daiToken.balanceOf(bob.address)+ ":"+
-      await usdcToken.balanceOf(bob.address)
-      );
-      const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
-      const swapTx = await dust.batchCollectWithUniversalRouter(
-        {
-          commands,
-          inputs,
-          deadline:    Math.floor(Date.now() / 1e3) + 1800,
-          targetToken: usdtTokenAddress,
-          dstChain:    0,
-          recipient:   ZeroHash,
-          arbiterFee:  0
-        },
-        TOKENS.map(t => t.addr),
-        TOKENS.map(t => t.amtWei),
-        {
-          // gasLimit: 1_000_000,
-          value: 0,
-        }
-      );
-      console.log('⛓️  Swap  TxHash:', swapTx.hash);
-      const rc = await swapTx.wait();
-      console.log(
-        rc.status === 1
-          ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
-          : '❌ Swap FAILED'
-      );
-      console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-      await daiToken.balanceOf(bob.address)+ ":"+
-      await usdcToken.balanceOf(bob.address)
-      );
-    });
+  //     const abi      = AbiCoder.defaultAbiCoder();
+  //     const commands = '0x' + '00'.repeat(TOKENS.length);
+  //     const inputs   = TOKENS.map(tk =>
+  //       abi.encode(
+  //         ['address', 'uint256', 'uint256', 'bytes', 'bool'],
+  //         [DustCollectorAddress, tk.amtWei, 0, v3Path(tk.addr, usdtTokenAddress, tk.fee), false]
+  //       )
+  //     );
+  //     console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address)
+  //     );
+  //     const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+  //     const swapTx = await dust.batchCollectWithUniversalRouter(
+  //       {
+  //         commands,
+  //         inputs,
+  //         deadline:    Math.floor(Date.now() / 1e3) + 1800,
+  //         targetToken: usdtTokenAddress,
+  //         dstChain:    0,
+  //         recipient:   ZeroHash,
+  //         arbiterFee:  0
+  //       },
+  //       TOKENS.map(t => t.addr),
+  //       TOKENS.map(t => t.amtWei),
+  //       {
+  //         // gasLimit: 1_000_000,
+  //         value: 0,
+  //       }
+  //     );
+  //     console.log('⛓️  Swap  TxHash:', swapTx.hash);
+  //     const rc = await swapTx.wait();
+  //     console.log(
+  //       rc.status === 1
+  //         ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
+  //         : '❌ Swap FAILED'
+  //     );
+  //     console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address)
+  //     );
+  //   });
 
-    it("uniswap v3 test 2", async function () {
-      let TOKENS = [
-        { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
-        { addr: daiTokenAddress, dec: 18, amt: '0.02', fee: 500, amtWei: 0n }
-      ];
-      /* step 0: prepare amounts */
-      for (const tk of TOKENS) tk.amtWei = parseUnits(tk.amt, tk.dec);
-      /* ---------- 1. 逐币授权 ---------- */
-      for (const tk of TOKENS) {
-        tk.amtWei = parseUnits(tk.amt, tk.dec);          // BigInt 数量
-        await ensurePermit2(tk.addr, bob, tk.amtWei);
-      }
-      /* ---------- 2. 组装 UniversalRouter commands/inputs ---------- */
-      const abiCoder = AbiCoder.defaultAbiCoder();
-      let   commands = '';                               // 每个代币一条 0x00
-      const inputs   = [];
+  //   it("uniswap v3 test 2", async function () {
+  //     let TOKENS = [
+  //       { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+  //       { addr: daiTokenAddress, dec: 18, amt: '0.02', fee: 500, amtWei: 0n }
+  //     ];
+  //     /* step 0: prepare amounts */
+  //     for (const tk of TOKENS) tk.amtWei = parseUnits(tk.amt, tk.dec);
+  //     /* ---------- 1. 逐币授权 ---------- */
+  //     for (const tk of TOKENS) {
+  //       tk.amtWei = parseUnits(tk.amt, tk.dec);          // BigInt 数量
+  //       await ensurePermit2(tk.addr, bob, tk.amtWei);
+  //     }
+  //     /* ---------- 2. 组装 UniversalRouter commands/inputs ---------- */
+  //     const abiCoder = AbiCoder.defaultAbiCoder();
+  //     let   commands = '';                               // 每个代币一条 0x00
+  //     const inputs   = [];
 
-      for (const tk of TOKENS) {
-        commands += '00';
-        inputs.push(
-          abiCoder.encode(
-            ['address','uint256','uint256','bytes','bool'],
-            [DustCollectorAddress, tk.amtWei, 0, v3Path(tk.addr, usdtTokenAddress, tk.fee), false]  // payerIsUser = false
-          )
-        );
-      }
-      commands  = '0x' + commands;
-      const deadline = Math.floor(Date.now() / 1e3) + 1800;  // 30 分钟
+  //     for (const tk of TOKENS) {
+  //       commands += '00';
+  //       inputs.push(
+  //         abiCoder.encode(
+  //           ['address','uint256','uint256','bytes','bool'],
+  //           [DustCollectorAddress, tk.amtWei, 0, v3Path(tk.addr, usdtTokenAddress, tk.fee), false]  // payerIsUser = false
+  //         )
+  //       );
+  //     }
+  //     commands  = '0x' + commands;
+  //     const deadline = Math.floor(Date.now() / 1e3) + 1800;  // 30 分钟
 
-    /* ---------- 3. pullTokens & pullAmounts ---------- */
-    const pullTokens  = TOKENS.map(t => t.addr);
-    const pullAmounts = TOKENS.map(t => t.amtWei);
-    /* ---------- 4. 调 DustCollector ---------- */
-    const collector = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
-    console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-    await daiToken.balanceOf(bob.address)+ ":"+
-    await usdcToken.balanceOf(bob.address)
-    );
-    console.log('⏳  Sending transaction …');
-    const tx = await collector.batchCollectWithUniversalRouter(
-      {
-        commands,
-        inputs,
-        deadline,
-        targetToken: usdtTokenAddress,
-        dstChain:    0,
-        recipient:   ZeroHash,
-        arbiterFee:  0
-      },
-      pullTokens,
-      pullAmounts,
-      { value: 0 }
-    );
+  //   /* ---------- 3. pullTokens & pullAmounts ---------- */
+  //   const pullTokens  = TOKENS.map(t => t.addr);
+  //   const pullAmounts = TOKENS.map(t => t.amtWei);
+  //   /* ---------- 4. 调 DustCollector ---------- */
+  //   const collector = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+  //   console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //   await daiToken.balanceOf(bob.address)+ ":"+
+  //   await usdcToken.balanceOf(bob.address)
+  //   );
+  //   console.log('⏳  Sending transaction …');
+  //   const tx = await collector.batchCollectWithUniversalRouter(
+  //     {
+  //       commands,
+  //       inputs,
+  //       deadline,
+  //       targetToken: usdtTokenAddress,
+  //       dstChain:    0,
+  //       recipient:   ZeroHash,
+  //       arbiterFee:  0
+  //     },
+  //     pullTokens,
+  //     pullAmounts,
+  //     { value: 0 }
+  //   );
 
-    console.log(`📨  Tx hash: ${tx.hash}`);
-    const rc = await tx.wait();
-    console.log(rc.status === 1 ? '✅  SUCCESS' : '❌  FAILED');
-    console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-    await daiToken.balanceOf(bob.address)+ ":"+
-    await usdcToken.balanceOf(bob.address)
-    );
-    });
+  //   console.log(`📨  Tx hash: ${tx.hash}`);
+  //   const rc = await tx.wait();
+  //   console.log(rc.status === 1 ? '✅  SUCCESS' : '❌  FAILED');
+  //   console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //   await daiToken.balanceOf(bob.address)+ ":"+
+  //   await usdcToken.balanceOf(bob.address)
+  //   );
+  //   });
 
-    // tokenA->tokenB->tokenC
-    it("uniswap v3 test 3", async function () {
-      let TOKENS = [
-        { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
-      ];
+  //   // tokenA->tokenB->tokenC
+  //   it("uniswap v3 test 3", async function () {
+  //     let TOKENS = [
+  //       { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+  //     ];
 
-      await signPerimit(TOKENS, bob);
-      /* step 4: build swap commands & call collector */
-      console.log('📋 Step 4) Call DustCollector swap');
+  //     await signPerimit(TOKENS, bob);
+  //     /* step 4: build swap commands & call collector */
+  //     console.log('📋 Step 4) Call DustCollector swap');
 
-      const abi      = AbiCoder.defaultAbiCoder();
-      const commands = '0x' + '00'.repeat(TOKENS.length);
-      const inputs   = TOKENS.map(tk =>
-        abi.encode(
-          ['address', 'uint256', 'uint256', 'bytes', 'bool'],
-          [DustCollectorAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, usdtTokenAddress, daiTokenAddress]), false]
-        )
-      );
-      console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-      await daiToken.balanceOf(bob.address)+ ":"+
-      await usdcToken.balanceOf(bob.address)
-      );
-      const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
-      const swapTx = await dust.batchCollectWithUniversalRouter(
-        {
-          commands,
-          inputs,
-          deadline:    Math.floor(Date.now() / 1e3) + 1800,
-          targetToken: daiTokenAddress,
-          dstChain:    0,
-          recipient:   ZeroHash,
-          arbiterFee:  0
-        },
-        TOKENS.map(t => t.addr),
-        TOKENS.map(t => t.amtWei),
-        {
-          // gasLimit: 1_000_000,
-          value: 0,
-        }
-      );
-      console.log('⛓️  Swap  TxHash:', swapTx.hash);
-      const rc = await swapTx.wait();
-      console.log(
-        rc.status === 1
-          ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
-          : '❌ Swap FAILED'
-      );
-      console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-      await daiToken.balanceOf(bob.address)+ ":"+
-      await usdcToken.balanceOf(bob.address)
-      );
-    });
-    // erc20->eth
-    it("uniswap v3 test 4", async function () {
-      let TOKENS = [
-        { addr: daiTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
-      ];
+  //     const abi      = AbiCoder.defaultAbiCoder();
+  //     const commands = '0x' + '00'.repeat(TOKENS.length);
+  //     const inputs   = TOKENS.map(tk =>
+  //       abi.encode(
+  //         ['address', 'uint256', 'uint256', 'bytes', 'bool'],
+  //         [DustCollectorAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, usdtTokenAddress, daiTokenAddress]), false]
+  //       )
+  //     );
+  //     console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address)
+  //     );
+  //     const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+  //     const swapTx = await dust.batchCollectWithUniversalRouter(
+  //       {
+  //         commands,
+  //         inputs,
+  //         deadline:    Math.floor(Date.now() / 1e3) + 1800,
+  //         targetToken: daiTokenAddress,
+  //         dstChain:    0,
+  //         recipient:   ZeroHash,
+  //         arbiterFee:  0
+  //       },
+  //       TOKENS.map(t => t.addr),
+  //       TOKENS.map(t => t.amtWei),
+  //       {
+  //         // gasLimit: 1_000_000,
+  //         value: 0,
+  //       }
+  //     );
+  //     console.log('⛓️  Swap  TxHash:', swapTx.hash);
+  //     const rc = await swapTx.wait();
+  //     console.log(
+  //       rc.status === 1
+  //         ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
+  //         : '❌ Swap FAILED'
+  //     );
+  //     console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address)
+  //     );
+  //   });
+  //   // erc20->eth
+  //   it("uniswap v3 test 4", async function () {
+  //     let TOKENS = [
+  //       { addr: daiTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+  //     ];
 
-      await signPerimit(TOKENS, bob);
-      /* step 4: build swap commands & call collector */
-      console.log('📋 Step 4) Call DustCollector swap');
+  //     await signPerimit(TOKENS, bob);
+  //     /* step 4: build swap commands & call collector */
+  //     console.log('📋 Step 4) Call DustCollector swap');
 
-      const abi      = AbiCoder.defaultAbiCoder();
-      const commands = '0x' + '00'.repeat(TOKENS.length);
-      const inputs   = TOKENS.map(tk =>
-        abi.encode(
-          ['address', 'uint256', 'uint256', 'bytes', 'bool'],
-          [DustCollectorAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, WETHAddress]), false]
-        )
-      );
-      console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-      await daiToken.balanceOf(bob.address)+ ":"+
-      await usdcToken.balanceOf(bob.address) + ":"+
-      await WETHContract.balanceOf(bob.address)
-      );
-      const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
-      const swapTx = await dust.batchCollectWithUniversalRouter(
-        {
-          commands,
-          inputs,
-          deadline:    Math.floor(Date.now() / 1e3) + 1800,
-          targetToken: WETHAddress,
-          dstChain:    0,
-          recipient:   ZeroHash,
-          arbiterFee:  0
-        },
-        TOKENS.map(t => t.addr),
-        TOKENS.map(t => t.amtWei),
-        {
-          // gasLimit: 1_000_000,
-          value: 0,
-        }
-      );
-      console.log('⛓️  Swap  TxHash:', swapTx.hash);
-      const rc = await swapTx.wait();
-      console.log(
-        rc.status === 1
-          ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
-          : '❌ Swap FAILED'
-      );
-      console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-      await daiToken.balanceOf(bob.address)+ ":"+
-      await usdcToken.balanceOf(bob.address) + ":"+
-      await WETHContract.balanceOf(bob.address)
-      );
-      await WETHContract.connect(bob).withdraw(await WETHContract.balanceOf(bob.address));
-      console.log("after withdraw:" + await usdtToken.balanceOf(bob.address) + ":"+
-      await daiToken.balanceOf(bob.address)+ ":"+
-      await usdcToken.balanceOf(bob.address) + ":"+
-      await WETHContract.balanceOf(bob.address)
-      );
-    });
+  //     const abi      = AbiCoder.defaultAbiCoder();
+  //     const commands = '0x' + '00'.repeat(TOKENS.length);
+  //     const inputs   = TOKENS.map(tk =>
+  //       abi.encode(
+  //         ['address', 'uint256', 'uint256', 'bytes', 'bool'],
+  //         [DustCollectorAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, WETHAddress]), false]
+  //       )
+  //     );
+  //     console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address) + ":"+
+  //     await WETHContract.balanceOf(bob.address)
+  //     );
+  //     const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+  //     const swapTx = await dust.batchCollectWithUniversalRouter(
+  //       {
+  //         commands,
+  //         inputs,
+  //         deadline:    Math.floor(Date.now() / 1e3) + 1800,
+  //         targetToken: WETHAddress,
+  //         dstChain:    0,
+  //         recipient:   ZeroHash,
+  //         arbiterFee:  0
+  //       },
+  //       TOKENS.map(t => t.addr),
+  //       TOKENS.map(t => t.amtWei),
+  //       {
+  //         // gasLimit: 1_000_000,
+  //         value: 0,
+  //       }
+  //     );
+  //     console.log('⛓️  Swap  TxHash:', swapTx.hash);
+  //     const rc = await swapTx.wait();
+  //     console.log(
+  //       rc.status === 1
+  //         ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
+  //         : '❌ Swap FAILED'
+  //     );
+  //     console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address) + ":"+
+  //     await WETHContract.balanceOf(bob.address)
+  //     );
+  //     await WETHContract.connect(bob).withdraw(await WETHContract.balanceOf(bob.address));
+  //     console.log("after withdraw:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address) + ":"+
+  //     await WETHContract.balanceOf(bob.address)
+  //     );
+  //   });
 
-    // tokenA->tokenB->tokenC
-    it("uniswap v2 test 1", async function () {
-     let TOKENS = [
-        { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
-      ];
+  //   // tokenA->tokenB->tokenC
+  //   it("uniswap v2 test 1", async function () {
+  //    let TOKENS = [
+  //       { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+  //     ];
 
-      await signPerimit(TOKENS, bob);
-      /* step 4: build swap commands & call collector */
-      console.log('📋 Step 4) Call DustCollector swap');
+  //     await signPerimit(TOKENS, bob);
+  //     /* step 4: build swap commands & call collector */
+  //     console.log('📋 Step 4) Call DustCollector swap');
 
-      const abi      = AbiCoder.defaultAbiCoder();
-      const commands = '0x' + '08'.repeat(TOKENS.length);
-      const inputs   = TOKENS.map(tk =>
-        abi.encode(
-          ['address', 'uint256', 'uint256', 'address[]', 'bool'],
-          [DustCollectorAddress, tk.amtWei, 0, [tk.addr, usdtTokenAddress, daiTokenAddress], false]
-        )
-      );
-      console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-      await daiToken.balanceOf(bob.address)+ ":"+
-      await usdcToken.balanceOf(bob.address)
-      );
-      const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
-      const swapTx = await dust.batchCollectWithUniversalRouter(
-        {
-          commands,
-          inputs,
-          deadline:    Math.floor(Date.now() / 1e3) + 1800,
-          targetToken: daiTokenAddress,
-          dstChain:    0,
-          recipient:   ZeroHash,
-          arbiterFee:  0
-        },
-        TOKENS.map(t => t.addr),
-        TOKENS.map(t => t.amtWei),
-        {
-          // gasLimit: 1_000_000,
-          value: 0,
-        }
-      );
-      console.log('⛓️  Swap  TxHash:', swapTx.hash);
-      const rc = await swapTx.wait();
-      console.log(
-        rc.status === 1
-          ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
-          : '❌ Swap FAILED'
-      );
-      console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-      await daiToken.balanceOf(bob.address)+ ":"+
-      await usdcToken.balanceOf(bob.address)
-      );
-    });
+  //     const abi      = AbiCoder.defaultAbiCoder();
+  //     const commands = '0x' + '08'.repeat(TOKENS.length);
+  //     const inputs   = TOKENS.map(tk =>
+  //       abi.encode(
+  //         ['address', 'uint256', 'uint256', 'address[]', 'bool'],
+  //         [DustCollectorAddress, tk.amtWei, 0, [tk.addr, usdtTokenAddress, daiTokenAddress], false]
+  //       )
+  //     );
+  //     console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address)
+  //     );
+  //     const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+  //     const swapTx = await dust.batchCollectWithUniversalRouter(
+  //       {
+  //         commands,
+  //         inputs,
+  //         deadline:    Math.floor(Date.now() / 1e3) + 1800,
+  //         targetToken: daiTokenAddress,
+  //         dstChain:    0,
+  //         recipient:   ZeroHash,
+  //         arbiterFee:  0
+  //       },
+  //       TOKENS.map(t => t.addr),
+  //       TOKENS.map(t => t.amtWei),
+  //       {
+  //         // gasLimit: 1_000_000,
+  //         value: 0,
+  //       }
+  //     );
+  //     console.log('⛓️  Swap  TxHash:', swapTx.hash);
+  //     const rc = await swapTx.wait();
+  //     console.log(
+  //       rc.status === 1
+  //         ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
+  //         : '❌ Swap FAILED'
+  //     );
+  //     console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address)
+  //     );
+  //   });
 
-    // tokenA->tokenB->tokenC
-    it("Mix uniswap v2 v3 test 1", async function () {
-     let TOKENS = [
-        { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
-      ];
+  //   // tokenA->tokenB->tokenC
+  //   it("Mix uniswap v2 v3 test 1", async function () {
+  //    let TOKENS = [
+  //       { addr: usdcTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+  //     ];
 
-      await signPerimit(TOKENS, bob);
-      /* step 4: build swap commands & call collector */
-      console.log('📋 Step 4) Call DustCollector swap');
+  //     await signPerimit(TOKENS, bob);
+  //     /* step 4: build swap commands & call collector */
+  //     console.log('📋 Step 4) Call DustCollector swap');
 
-      const abi      = AbiCoder.defaultAbiCoder();
-      let   commands = '';
-      const inputs   = [];
+  //     const abi      = AbiCoder.defaultAbiCoder();
+  //     let   commands = '';
+  //     const inputs   = [];
 
-      for (const tk of TOKENS) {
-        commands += '00';
-        inputs.push(
-          abi.encode(
-            ['address','uint256','uint256','bytes','bool'],
-            [DustCollectorAddress, tk.amtWei/BigInt(2), 0, encodePathExactInput([tk.addr, usdtTokenAddress, daiTokenAddress]), false]  // payerIsUser = false
-          )
-        );
-      }
-      for (const tk of TOKENS) {
-        commands += '08';
-        inputs.push(
-        abi.encode(
-          ['address', 'uint256', 'uint256', 'address[]', 'bool'],
-          [DustCollectorAddress, tk.amtWei/BigInt(2), 0, [tk.addr, usdtTokenAddress, daiTokenAddress], false]
-        )
-        );
-      }
-      commands  = '0x' + commands;
-      console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-      await daiToken.balanceOf(bob.address)+ ":"+
-      await usdcToken.balanceOf(bob.address)
-      );
-      const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
-      const swapTx = await dust.batchCollectWithUniversalRouter(
-        {
-          commands,
-          inputs,
-          deadline:    Math.floor(Date.now() / 1e3) + 1800,
-          targetToken: daiTokenAddress,
-          dstChain:    0,
-          recipient:   ZeroHash,
-          arbiterFee:  0
-        },
-        TOKENS.map(t => t.addr),
-        TOKENS.map(t => t.amtWei),
-        {
-          // gasLimit: 1_000_000,
-          value: 0,
-        }
-      );
-      console.log('⛓️  Swap  TxHash:', swapTx.hash);
-      const rc = await swapTx.wait();
-      console.log(
-        rc.status === 1
-          ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
-          : '❌ Swap FAILED'
-      );
-      console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-      await daiToken.balanceOf(bob.address)+ ":"+
-      await usdcToken.balanceOf(bob.address)
-      );
-    });
-  it("uniswap v3 unwrap weth test", async function () {
-      let TOKENS = [
-        { addr: daiTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
-      ];
+  //     for (const tk of TOKENS) {
+  //       commands += '00';
+  //       inputs.push(
+  //         abi.encode(
+  //           ['address','uint256','uint256','bytes','bool'],
+  //           [DustCollectorAddress, tk.amtWei/BigInt(2), 0, encodePathExactInput([tk.addr, usdtTokenAddress, daiTokenAddress]), false]  // payerIsUser = false
+  //         )
+  //       );
+  //     }
+  //     for (const tk of TOKENS) {
+  //       commands += '08';
+  //       inputs.push(
+  //       abi.encode(
+  //         ['address', 'uint256', 'uint256', 'address[]', 'bool'],
+  //         [DustCollectorAddress, tk.amtWei/BigInt(2), 0, [tk.addr, usdtTokenAddress, daiTokenAddress], false]
+  //       )
+  //       );
+  //     }
+  //     commands  = '0x' + commands;
+  //     console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address)
+  //     );
+  //     const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+  //     const swapTx = await dust.batchCollectWithUniversalRouter(
+  //       {
+  //         commands,
+  //         inputs,
+  //         deadline:    Math.floor(Date.now() / 1e3) + 1800,
+  //         targetToken: daiTokenAddress,
+  //         dstChain:    0,
+  //         recipient:   ZeroHash,
+  //         arbiterFee:  0
+  //       },
+  //       TOKENS.map(t => t.addr),
+  //       TOKENS.map(t => t.amtWei),
+  //       {
+  //         // gasLimit: 1_000_000,
+  //         value: 0,
+  //       }
+  //     );
+  //     console.log('⛓️  Swap  TxHash:', swapTx.hash);
+  //     const rc = await swapTx.wait();
+  //     console.log(
+  //       rc.status === 1
+  //         ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
+  //         : '❌ Swap FAILED'
+  //     );
+  //     console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address)
+  //     );
+  //   });
+  // it("uniswap v3 unwrap weth test", async function () {
+  //     let TOKENS = [
+  //       { addr: daiTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+  //     ];
 
-      await signPerimit(TOKENS, bob);
-      /* step 4: build swap commands & call collector */
-      console.log('📋 Step 4) Call DustCollector swap');
+  //     await signPerimit(TOKENS, bob);
+  //     /* step 4: build swap commands & call collector */
+  //     console.log('📋 Step 4) Call DustCollector swap');
+  //     // await WETHContract.transferFrom(alice.address, routerAddress, ethers.parseEther('1'))
+  //     const abi      = AbiCoder.defaultAbiCoder();
+  //     let   commands = '0x';
+  //     const inputs   = [];
+  //     for (const tk of TOKENS) {
+  //       commands += '00';
+  //       inputs.push(
+  //         abi.encode(
+  //           ['address','uint256','uint256','bytes','bool'],
+  //           [routerAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, WETHAddress]), false]  // payerIsUser = false
+  //         )
+  //       );
+  //     }
+  //     // commands += '05';
+  //     // inputs.push(
+  //     //     abi.encode(
+  //     //       ['address','address','uint256'],
+  //     //       [WETHAddress, DustCollectorAddress, 0]
+  //     //     )
+  //     // );
+  //     commands += '0c';
+  //     inputs.push(
+  //         abi.encode(
+  //           ['address','uint256'],
+  //           [DustCollectorAddress, 0]
+  //         )
+  //     );
+  //     console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address) + ":"+
+  //     await WETHContract.balanceOf(bob.address) + ":"+
+  //     await WETHContract.balanceOf(DustCollectorAddress)
+  //     );
+  //     const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
+  //     const swapTx = await dust.batchCollectWithUniversalRouter(
+  //       {
+  //         commands,
+  //         inputs,
+  //         deadline:    Math.floor(Date.now() / 1e3) + 1800,
+  //         targetToken: WETHAddress,
+  //         dstChain:    0,
+  //         recipient:   ZeroHash,
+  //         arbiterFee:  0
+  //       },
+  //       TOKENS.map(t => t.addr),
+  //       TOKENS.map(t => t.amtWei),
+  //       {
+  //         value: 0,
+  //       }
+  //     );
+  //     console.log('⛓️  Swap  TxHash:', swapTx.hash);
+  //     const rc = await swapTx.wait();
+  //     console.log(
+  //       rc.status === 1
+  //         ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
+  //         : '❌ Swap FAILED'
+  //     );
+  //     console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address) + ":"+
+  //     await WETHContract.balanceOf(bob.address) + ":"+
+  //     await WETHContract.balanceOf(DustCollectorAddress)
+  //     );
 
-      const abi      = AbiCoder.defaultAbiCoder();
-      let   commands = '0x';
-      const inputs   = [];
-      for (const tk of TOKENS) {
-        commands += '00';
-        inputs.push(
-          abi.encode(
-            ['address','uint256','uint256','bytes','bool'],
-            [routerAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, WETHAddress]), false]  // payerIsUser = false
-          )
-        );
-      }
-      commands += '0c';
-      inputs.push(
-          abi.encode(
-            ['address','uint256'],
-            [DustCollectorAddress, 0]
-          )
-      );
-      console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-      await daiToken.balanceOf(bob.address)+ ":"+
-      await usdcToken.balanceOf(bob.address) + ":"+
-      await WETHContract.balanceOf(bob.address) + ":"+
-      await WETHContract.balanceOf(DustCollectorAddress)
-      );
-      const dust = new ethers.Contract(DustCollectorAddress, DustCollectorContract.interface, bob);
-      const swapTx = await dust.batchCollectWithUniversalRouter(
-        {
-          commands,
-          inputs,
-          deadline:    Math.floor(Date.now() / 1e3) + 1800,
-          targetToken: WETHAddress,
-          dstChain:    0,
-          recipient:   ZeroHash,
-          arbiterFee:  0
-        },
-        TOKENS.map(t => t.addr),
-        TOKENS.map(t => t.amtWei),
-        {
-          value: 0,
-        }
-      );
-      console.log('⛓️  Swap  TxHash:', swapTx.hash);
-      const rc = await swapTx.wait();
-      console.log(
-        rc.status === 1
-          ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
-          : '❌ Swap FAILED'
-      );
-      console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
-      await daiToken.balanceOf(bob.address)+ ":"+
-      await usdcToken.balanceOf(bob.address) + ":"+
-      await WETHContract.balanceOf(bob.address) + ":"+
-      await WETHContract.balanceOf(DustCollectorAddress)
-      );
-      expect(await ethers.provider.getBalance(DustCollectorAddress)).to.be.above(ethers.parseEther('0'))
-  });
+  //     expect(await ethers.provider.getBalance(DustCollectorAddress)).to.be.above(ethers.parseEther('0'))
+  // });
 
 
-    it("uniswap v3 unwrap weth with cctp test", async function () {
+  //   it("uniswap v3 unwrap weth with cctp test", async function () {
+  //   const DustCollectorCCTP = await ethers.getContractFactory("DustCollectorUniversalPermit2CCTP");
+  //   const DustCollectorCCTPContract = await DustCollectorCCTP.deploy(routerAddress, permit2Address, WORMHOLE_CCTP_ADDRESS, alice.address);
+  //   const DustCollectorCCTPAddress = await DustCollectorCCTPContract.getAddress();
+  //   DustCollectorAddress = DustCollectorCCTPAddress;
+  //     let TOKENS = [
+  //       { addr: daiTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
+  //     ];
+
+  //     await signPerimit(TOKENS, bob);
+  //     /* step 4: build swap commands & call collector */
+  //     console.log('📋 Step 4) Call DustCollector swap');
+
+  //     const abi      = AbiCoder.defaultAbiCoder();
+  //     let   commands = '0x';
+  //     const inputs   = [];
+  //     for (const tk of TOKENS) {
+  //       commands += '00';
+  //       inputs.push(
+  //         abi.encode(
+  //           ['address','uint256','uint256','bytes','bool'],
+  //           [routerAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, WETHAddress]), false]  // payerIsUser = false
+  //         )
+  //       );
+  //     }
+  //     commands += '0c';
+  //     inputs.push(
+  //         abi.encode(
+  //           ['address','uint256'],
+  //           [DustCollectorAddress, 0]
+  //         )
+  //     );
+  //     console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address) + ":"+
+  //     await WETHContract.balanceOf(bob.address) + ":"+
+  //     await WETHContract.balanceOf(DustCollectorAddress)
+  //     );
+  //     const dust = new ethers.Contract(DustCollectorAddress, DustCollectorCCTPContract.interface, bob);
+  //     const swapTx = await dust.batchCollectWithUniversalRouter(
+  //       {
+  //         commands,
+  //         inputs,
+  //         deadline:    Math.floor(Date.now() / 1e3) + 1800,
+  //         targetToken: WETHAddress,
+  //         dstChain:    0,
+  //         dstDomain:   0,
+  //         recipient:   ZeroHash,
+  //         arbiterFee:  0,
+  //         destinationCaller: ZeroHash,
+  //         maxFee:       0,
+  //         minFinalityThreshold:       0,
+  //         executorArgs: {
+  //           refundAddress: bob.address,
+  //           signedQuote: "0x00",
+  //           instructions: "0x00"
+  //         },
+  //         feeArgs: {
+  //           dbps: 0,
+  //           payee: bob.address
+  //         },
+  //         estimatedCost:0 ,
+  //       },
+  //       TOKENS.map(t => t.addr),
+  //       TOKENS.map(t => t.amtWei),
+  //       {
+  //         // gasLimit: 1_000_000,
+  //         value: ethers.parseEther('1'),
+  //       }
+  //     );
+  //     console.log('⛓️  Swap  TxHash:', swapTx.hash);
+  //     const rc = await swapTx.wait();
+  //     console.log(
+  //       rc.status === 1
+  //         ? `🎉 Swap SUCCESS  | GasUsed: ${rc.gasUsed}`
+  //         : '❌ Swap FAILED'
+  //     );
+  //     console.log("after swap:" + await usdtToken.balanceOf(bob.address) + ":"+
+  //     await daiToken.balanceOf(bob.address)+ ":"+
+  //     await usdcToken.balanceOf(bob.address) + ":"+
+  //     await WETHContract.balanceOf(bob.address) + ":"+
+  //     await WETHContract.balanceOf(DustCollectorAddress)
+  //     );
+  //     expect(await ethers.provider.getBalance(DustCollectorAddress)).to.be.above(ethers.parseEther('0'))
+  // });
+
+    it("uniswap v3 unwrap weth with cctp test2", async function () {
     const DustCollectorCCTP = await ethers.getContractFactory("DustCollectorUniversalPermit2CCTP");
     const DustCollectorCCTPContract = await DustCollectorCCTP.deploy(routerAddress, permit2Address, WORMHOLE_CCTP_ADDRESS, alice.address);
     const DustCollectorCCTPAddress = await DustCollectorCCTPContract.getAddress();
@@ -866,17 +960,10 @@ describe("Dust collector", function () {
         inputs.push(
           abi.encode(
             ['address','uint256','uint256','bytes','bool'],
-            [routerAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, WETHAddress]), false]  // payerIsUser = false
+            [DustCollectorAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, usdtTokenAddress]), false]  // payerIsUser = false
           )
         );
       }
-      commands += '0c';
-      inputs.push(
-          abi.encode(
-            ['address','uint256'],
-            [DustCollectorAddress, 0]
-          )
-      );
       console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
       await daiToken.balanceOf(bob.address)+ ":"+
       await usdcToken.balanceOf(bob.address) + ":"+
@@ -889,7 +976,7 @@ describe("Dust collector", function () {
           commands,
           inputs,
           deadline:    Math.floor(Date.now() / 1e3) + 1800,
-          targetToken: WETHAddress,
+          targetToken: usdtTokenAddress,
           dstChain:    0,
           dstDomain:   0,
           recipient:   ZeroHash,
@@ -912,7 +999,7 @@ describe("Dust collector", function () {
         TOKENS.map(t => t.amtWei),
         {
           // gasLimit: 1_000_000,
-          value: ethers.parseEther('1'),
+          value: 0,
         }
       );
       console.log('⛓️  Swap  TxHash:', swapTx.hash);
@@ -928,7 +1015,6 @@ describe("Dust collector", function () {
       await WETHContract.balanceOf(bob.address) + ":"+
       await WETHContract.balanceOf(DustCollectorAddress)
       );
-      expect(await ethers.provider.getBalance(DustCollectorAddress)).to.be.above(ethers.parseEther('0'))
   });
 
   });

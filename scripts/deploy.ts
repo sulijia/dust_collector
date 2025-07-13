@@ -17,6 +17,7 @@ const AAVE  = "0x63706e401c06ac8513145b7687a14804d17f814b";
 const PERMIT2       = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 const COLLECTOR     = "0xE0166322CFA24d22825123103aC531f056F8a30B";
 const WORMHOLE_CORE = "0xbebdb6C8ddC678FfA9f8748f85C815C556Dd8ac6";
+const UNIVERSAL_ROUTER = "0x6ff5693b99212da76ad316178a184ab56d299b43";
 
 /* ---------- ABI ---------- */
 const DUST_ABI = [
@@ -128,6 +129,13 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipi
 
   commands  = '0x' + commands;
   if(isToETH) {
+      // commands += '05';
+      // inputs.push(
+      //     abi.encode(
+      //       ['address','address','uint256'],
+      //       [WETH, COLLECTOR, 300000000000000]
+      //     )
+      // );
       commands += '0c';
       inputs.push(
           abi.encode(
@@ -145,26 +153,24 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipi
 
   /* ---------- 4. 调 DustCollector ---------- */
   console.log('⏳  Sending transaction …');
-  console.log(commands);
-    console.log(inputs);
-  // const tx = await DustCollector.batchCollectWithUniversalRouter(
-  //   {
-  //     commands,
-  //     inputs,
-  //     deadline,
-  //     targetToken: targetToken,
-  //     dstChain:    dstChain,
-  //     recipient:   recipient,
-  //     arbiterFee:  arbiterFee
-  //   },
-  //   pullTokens,
-  //   pullAmounts,
-  //   { value: value }
-  // );
+  const tx = await DustCollector.batchCollectWithUniversalRouter(
+    {
+      commands,
+      inputs,
+      deadline,
+      targetToken: targetToken,
+      dstChain:    dstChain,
+      recipient:   recipient,
+      arbiterFee:  arbiterFee
+    },
+    pullTokens,
+    pullAmounts,
+    { value: value }
+  );
 
-  // console.log(`📨  Tx hash: ${tx.hash}`);
-  // const rc = await tx.wait();
-  // console.log(rc.status === 1 ? '✅  SUCCESS' : '❌  FAILED');
+  console.log(`📨  Tx hash: ${tx.hash}`);
+  const rc = await tx.wait();
+  console.log(rc.status === 1 ? '✅  SUCCESS' : '❌  FAILED');
 }
 
 async function main() {
@@ -176,23 +182,24 @@ async function main() {
   const core = new ethers.Contract(WORMHOLE_CORE, CORE_ABI, ethers.provider);
   msgFee = await core.messageFee();
   console.log(`📦 MessageFee: ${msgFee.toString()} wei`);
-//   // USDT-USDC
-//   let TOKENS = [
-//   {
-//     addr :  USDT,
-//     dec  :  6,
-//     amt  :  '1',
-//     amtWei: 0n,
-//     fee  : [100],
-//     path : [USDT, USDC]
-//   },
-// ];
-//   const userATA = getAssociatedTokenAddressSync(
-//       new PublicKey("EfqRM8ZGWhDTKJ7BHmFvNagKVu3AxQRDQs8WMMaoBCu6"), // wormhole USDC mint
-//       new PublicKey("HD4ktk6LUewd5vMePdQF6ZtvKi3mC41AD3ZM3qJW8N8e"),
-//       true,
-//   );
-//   await swap(DustCollector, TOKENS, signer, USDC, 1, toBytes32(userATA.toBase58()), arbiterFee, msgFee + arbiterFee);
+  // USDC-USDT
+  let TOKENS = [
+  {
+    addr :  USDC,
+    dec  :  6,
+    amt  :  '1',
+    amtWei: 0n,
+    fee  : [100],
+    path : [USDC, USDT]
+  },
+];
+  // const userATA = getAssociatedTokenAddressSync(
+  //     new PublicKey("EfqRM8ZGWhDTKJ7BHmFvNagKVu3AxQRDQs8WMMaoBCu6"), // wormhole USDC mint
+  //     new PublicKey("HD4ktk6LUewd5vMePdQF6ZtvKi3mC41AD3ZM3qJW8N8e"),
+  //     true,
+  // );
+  // await swap(DustCollector, TOKENS, signer, USDC, 1, toBytes32(userATA.toBase58()), arbiterFee, msgFee + arbiterFee);
+  await swap(DustCollector, TOKENS, signer, USDT, 0, ethers.ZeroHash, arbiterFee, msgFee + arbiterFee, false);
 //   // USDC-WETH-DAI
 //   let TOKENS = [
 //   {
@@ -204,19 +211,19 @@ async function main() {
 //     path : [USDC, WETH, AAVE]
 //   },
 // ];
-  // USDT-WETH
-  let TOKENS = [
-  {
-    addr :  USDT,
-    dec  :  6,
-    amt  :  '1',
-    amtWei: 0n,
-    fee  : [500],
-    path : [USDT, WETH]
-  },
-];
+//   // USDT-WETH
+//   let TOKENS = [
+//   {
+//     addr :  USDT,
+//     dec  :  6,
+//     amt  :  '0.9',
+//     amtWei: 0n,
+//     fee  : [500],
+//     path : [USDT, WETH]
+//   },
+// ];
 
-  await swap(DustCollector, TOKENS, signer, WETH, 0, ethers.ZeroHash, arbiterFee, msgFee + arbiterFee, true);
+//   await swap(DustCollector, TOKENS, signer, WETH, 0, ethers.ZeroHash, arbiterFee, msgFee + arbiterFee, true);
 }
 
 // We recommend this pattern to be able to use async/await everywhere

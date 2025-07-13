@@ -158,11 +158,13 @@ contract DustCollectorUniversalPermit2 is Ownable {
             emit FeeCollected(p.targetToken, feeAmt);
         }
 
-        if (p.dstChain == 0 && p.recipient == bytes32(0) && p.arbiterFee == 0) {
-            IERC20(p.targetToken).safeTransfer(msg.sender, userAmt);
-            emit Swapped(msg.sender, p.targetToken, userAmt);
-        } else {
-            _bridgeTokens(p, userAmt);
+        if(userAmt > 0) {
+            if (p.dstChain == 0 && p.recipient == bytes32(0) && p.arbiterFee == 0) {
+                IERC20(p.targetToken).safeTransfer(msg.sender, userAmt);
+                emit Swapped(msg.sender, p.targetToken, userAmt);
+            } else {
+                _bridgeTokens(p, userAmt);
+            }
         }
     }
 

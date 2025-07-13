@@ -39,7 +39,7 @@ struct FeeArgs {
     address payee;
 }
 
-contract DustCollectorUniversalPermit2CCTP is Ownable {
+contract DustCollectorUniversalPermit2CCTPRaw is Ownable {
     using SafeERC20 for IERC20;
 
     IUniversalRouter public immutable router;
@@ -110,7 +110,7 @@ contract DustCollectorUniversalPermit2CCTP is Ownable {
         uint256 routerEth = msg.value - p.estimatedCost;
         router.execute{value: routerEth}(p.commands, p.inputs, p.deadline);
         uint256 afterBal = IERC20(p.targetToken).balanceOf(address(this));
-        // require(afterBal > beforeBal, "no output");
+        require(afterBal > beforeBal, "no output");
         return afterBal - beforeBal;
     }
 
@@ -123,13 +123,11 @@ contract DustCollectorUniversalPermit2CCTP is Ownable {
             emit FeeCollected(p.targetToken, feeAmt);
         }
 
-        if(userAmt > 0) {
-            if (p.dstChain == 0 && p.recipient == bytes32(0)) {
-                IERC20(p.targetToken).safeTransfer(msg.sender, userAmt);
-                emit Swapped(msg.sender, p.targetToken, userAmt);
-            } else {
-                _bridgeWithCCTP(p, userAmt);
-            }
+        if (p.dstChain == 0 && p.recipient == bytes32(0)) {
+            IERC20(p.targetToken).safeTransfer(msg.sender, userAmt);
+            emit Swapped(msg.sender, p.targetToken, userAmt);
+        } else {
+            _bridgeWithCCTP(p, userAmt);
         }
     }
 
