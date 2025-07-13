@@ -6,6 +6,12 @@ import {getAssociatedTokenAddressSync} from "@solana/spl-token";
 import {
     PublicKey,
 } from "@solana/web3.js";
+import { SignerWithAddress } from '@nomicfoundation/hardhat-ethers/signers'
+import {
+  getPermitSignature, PermitSingle,PermitBatch, PermitDetails,getPermitBatchSignature,
+  signPermit
+} from '../test/permit2'
+import { abi as PERMIT2_ABI } from '../test/permit2/src/interfaces/IPermit2.sol/IPermit2.json'
 
 const USDC  = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const WETH  = "0x4200000000000000000000000000000000000006";
@@ -32,14 +38,10 @@ const ERC20_ABI = [
   'function allowance(address,address) view returns (uint256)'
 ];
 
-const PERMIT2_ABI = [
-  // returns (uint160 amount, uint48 expiration, uint48 nonce)
-  'function allowance(address owner,address token,address spender) view returns (uint160,uint48,uint48)',
-  'function approve(address token,address spender,uint160 amount,uint48 expiration) external'
-];
 const CORE_ABI = [
   'function messageFee() external view returns (uint256)'
 ];
+
 function base58Decode(str) {
   const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
   let result = 0n;
@@ -80,70 +82,97 @@ function toBytes32(addr) {
     return '0x' + hex.toLowerCase().padStart(64, '0');
   }
 }
-/**
- * 为指定 token 确保：
- * ① ERC20 → Permit2 已授权；
- * ② Permit2 → Collector 已授权。
- */
-async function ensurePermit2(token, owner, amount) {
-  const erc20  = new ethers.Contract(token, ERC20_ABI  , owner);
-  const permit = new ethers.Contract(PERMIT2, PERMIT2_ABI, owner);
 
-  /* === 1. ERC20 → Permit2 === */
-  const curErc20Allow = await erc20.allowance(owner.address, PERMIT2);
-  if (curErc20Allow < amount) {
-    console.log(`  · Approving ERC20 → Permit2   (${token})`);
-    await (await erc20.approve(PERMIT2, ethers.MaxUint256)).wait();
-  }
-
-  /* === 2. Permit2 → DustCollector === */
-  const [allowAmt] = await permit.allowance(owner.address, token, COLLECTOR);
-  if (allowAmt < amount) {
-    console.log(`  · Approving Permit2 → Collector (${token})`);
-    const maxUint160 = (1n << 160n) - 1n;               // 2¹⁶⁰-1
-    const expiration = Math.floor(Date.now() / 1e3) + 3600 * 24 * 30; // 30 天
-    await (await permit.approve(token, COLLECTOR, maxUint160, expiration)).wait();
-  }
+async function ensureApproval(token:string, wallet:SignerWithAddress, spender:string, amount:bigint) {
+    const t  = new ethers.Contract(token, ERC20_ABI  , wallet);
+    const allowance = await t.allowance(wallet.address, spender);
+    if (allowance < amount) {
+      console.log(`⏳ [Approve] ${token} -> Permit2`);
+      // TIPS:前端需要签名
+      await (await t.approve(spender, ethers.MaxUint256)).wait();
+      console.log(`✅ Approved`);
+    }
 }
 
-async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipient, arbiterFee, value, isToETH:boolean) {
-  const abi      = ethers.AbiCoder.defaultAbiCoder();
-  for (const tk of TOKENS) {
-    tk.amtWei = ethers.parseUnits(tk.amt, tk.dec);
-    await ensurePermit2(tk.addr, signer, tk.amtWei);
+async function signPerimit(TOKENS:any, owner:SignerWithAddress) {
+  const permit2 = new ethers.Contract(PERMIT2, PERMIT2_ABI, owner);
+  const ChainId = 8453; // base mainnet
+   /* step 0: prepare amounts */
+   for (const tk of TOKENS) tk.amtWei = ethers.parseUnits(tk.amt, tk.dec);
+   /* step 1: ERC20 -> Permit2 approvals */
+    console.log('📋 Step 1) ERC20 approvals');
+    // 一个token只需要approve一次
+    for (const tk of TOKENS)
+      await ensureApproval(tk.addr, owner, PERMIT2, tk.amtWei);
+
+    /* step 2: build batch-permit typed-data & sign */
+    console.log('\n📋 Step 2) Build & sign Permit2 batch');
+
+    const expiration  = Math.floor(Date.now() / 1e3) + 86400 * 30;   // 30d
+    const sigDeadline = Math.floor(Date.now() / 1e3) + 3600;        // 1h
+
+    const details:PermitDetails[] = [];
+    for (const tk of TOKENS) {
+      const [, , nonce] = await permit2.allowance(owner.address, tk.addr, COLLECTOR);
+      details.push({ token: tk.addr, amount: tk.amtWei, expiration, nonce });
+    }
+    const permitBatch:PermitBatch = { details, spender: COLLECTOR, sigDeadline };
+
+    const domain = { name: 'Permit2', chainId:ChainId, verifyingContract: PERMIT2 };
+    const types  = {
+      PermitBatch:   [{ name: 'details', type: 'PermitDetails[]' }, { name: 'spender', type: 'address' }, { name: 'sigDeadline', type: 'uint256' }],
+      PermitDetails: [{ name: 'token', type: 'address' }, { name: 'amount', type: 'uint160' }, { name: 'expiration', type: 'uint48' }, { name: 'nonce', type: 'uint48' }]
+    };
+
+    // TIPS:前端需要签名
+    const signature = await owner.signTypedData(domain, types, permitBatch);
+    console.log('🔑 Signature:', signature, '\n');
+
+    /* step 3: send permit tx */
+    console.log('📋 Step 3) Send permit() tx');
+    // TIPS:前端需要签名
+    const permitTx = await permit2["permit(address,((address,uint160,uint48,uint48)[],address,uint256),bytes)"](owner.address, permitBatch, signature);
+    console.log('⛓️  Permit TxHash:', permitTx.hash);
+    await permitTx.wait();
+    console.log('✅ Permit tx confirmed\n');
   }
+// 参数:
+// DustCollector: dust collector 合约
+// TOKENS: 需要swap的token数组信息
+// signer:签名钱包
+// targetToken: 要swap成什么token
+// dstChain: 如果需要跨链，这里是目标链的chain id,为0不需要跨链
+// recipient: 如果需要跨链，这里是另一条链上的接收地址,为ZeroHash不需要跨链
+// arbiterFee: 给relayer的费用，一般可以为0
+// value: 需要转的eth，看具体场景取值
+async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipient, arbiterFee, value) {
+  const abi      = ethers.AbiCoder.defaultAbiCoder();
+  // 把所有token授权给permit2
+  await signPerimit(TOKENS, signer)
 
   let commands = '';
   const inputs   = [];
-  let index = 0;
   for (const tk of TOKENS) {
-    commands += '00';
-    inputs.push(
-    abi.encode(
-      ['address', 'uint256', 'uint256', 'bytes', 'bool'],
-      [COLLECTOR, tk.amtWei, 0, encodePathAndFee(tk.path, tk.fee), false]
-    )
-    );
-    index+=1;
+    if(tk.version == "V3") {
+      commands += '00';
+      inputs.push(
+        abi.encode(
+          ['address', 'uint256', 'uint256', 'bytes', 'bool'],
+          [COLLECTOR, tk.amtWei, 0, encodePathAndFee(tk.path, tk.fee), false]
+        )
+      );
+    } else if(tk.version == "V2") {
+        commands += '08';
+        inputs.push(
+          abi.encode(
+            ['address', 'uint256', 'uint256', 'address[]', 'bool'],
+            [COLLECTOR, tk.amtWei, 0, tk.path, false]
+          )
+        );
+    }
   }
 
   commands  = '0x' + commands;
-  if(isToETH) {
-      // commands += '05';
-      // inputs.push(
-      //     abi.encode(
-      //       ['address','address','uint256'],
-      //       [WETH, COLLECTOR, 300000000000000]
-      //     )
-      // );
-      commands += '0c';
-      inputs.push(
-          abi.encode(
-            ['address','uint256'],
-            [COLLECTOR, 0]
-          )
-      );
-  }
 
   const deadline = Math.floor(Date.now() / 1e3) + 1800;  // 30 分钟
 
@@ -153,6 +182,7 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipi
 
   /* ---------- 4. 调 DustCollector ---------- */
   console.log('⏳  Sending transaction …');
+  // TIPS:前端需要签名
   const tx = await DustCollector.batchCollectWithUniversalRouter(
     {
       commands,
@@ -182,24 +212,35 @@ async function main() {
   const core = new ethers.Contract(WORMHOLE_CORE, CORE_ABI, ethers.provider);
   msgFee = await core.messageFee();
   console.log(`📦 MessageFee: ${msgFee.toString()} wei`);
-  // USDC-USDT
+
+  // 例子1: 2个token通过swap转为一个token， 下面例子具体是USDC跟DAI, 转为USDT
+  // 实现步骤如下:
+  // 1. 通过https://apptest.bolarity.xyz/router_api/quote
+  //    查询得到USDC转USDT的fees跟tokens, version,
+  //    查询得到DAI转USDT的fees跟tokens, version,
+  // 2. 构造TOKENS数组
   let TOKENS = [
   {
     addr :  USDC,
     dec  :  6,
-    amt  :  '1',
+    amt  :  '1', // 要转的金额，这里的1,代表1 USDC
     amtWei: 0n,
-    fee  : [100],
-    path : [USDC, USDT]
+    fee  : [100], // 查询得到的fees
+    path : [USDC, USDT], // 查询得到的tokens
+    version : "V3",
+  },
+  {
+    addr :  DAI,
+    dec  :  18,
+    amt  :  '0.1', // 要转的金额，这里的0.1,代表1 DAI
+    amtWei: 0n,
+    fee  : [100], // 查询得到的fees
+    path : [DAI, USDT], // 查询得到的tokens
+    version : "V3",
   },
 ];
-  // const userATA = getAssociatedTokenAddressSync(
-  //     new PublicKey("EfqRM8ZGWhDTKJ7BHmFvNagKVu3AxQRDQs8WMMaoBCu6"), // wormhole USDC mint
-  //     new PublicKey("HD4ktk6LUewd5vMePdQF6ZtvKi3mC41AD3ZM3qJW8N8e"),
-  //     true,
-  // );
-  // await swap(DustCollector, TOKENS, signer, USDC, 1, toBytes32(userATA.toBase58()), arbiterFee, msgFee + arbiterFee);
-  await swap(DustCollector, TOKENS, signer, USDT, 0, ethers.ZeroHash, arbiterFee, msgFee + arbiterFee, false);
+
+  await swap(DustCollector, TOKENS, signer, USDT, 0, ethers.ZeroHash, arbiterFee, msgFee + arbiterFee);
 //   // USDC-WETH-DAI
 //   let TOKENS = [
 //   {
@@ -223,7 +264,14 @@ async function main() {
 //   },
 // ];
 
-//   await swap(DustCollector, TOKENS, signer, WETH, 0, ethers.ZeroHash, arbiterFee, msgFee + arbiterFee, true);
+  // 跨链到solana
+  // const userATA = getAssociatedTokenAddressSync(
+  //     new PublicKey("EfqRM8ZGWhDTKJ7BHmFvNagKVu3AxQRDQs8WMMaoBCu6"), // wormhole USDC mint
+  //     new PublicKey("HD4ktk6LUewd5vMePdQF6ZtvKi3mC41AD3ZM3qJW8N8e"),
+  //     true,
+  // );
+  // await swap(DustCollector, TOKENS, signer, USDC, 1, toBytes32(userATA.toBase58()), arbiterFee, msgFee + arbiterFee);
+
 }
 
 // We recommend this pattern to be able to use async/await everywhere
