@@ -16,8 +16,8 @@ const AAVE  = "0x63706e401c06ac8513145b7687a14804d17f814b";
 
 
 const PERMIT2       = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
-// const COLLECTOR     = "0x0d6997d96bB769FFB6C755f6d3d04Fa6DF95AA71";
-const COLLECTOR     = "0x35407375AC1f0b51B90A5ad28a4A73F3FD35E717";
+const COLLECTOR     = "0x9D7227D1EcF129e7E481FFA9e64BB96448EDb68d";
+// const COLLECTOR     = "0x35407375AC1f0b51B90A5ad28a4A73F3FD35E717";
 // const COLLECTOR     = "0xa124646027Dcd8F04aE25e67fE06FC34980650eE"; raw
 const WORMHOLE_CORE = "0xbebdb6C8ddC678FfA9f8748f85C815C556Dd8ac6";
 const UNIVERSAL_ROUTER = "0x6ff5693b99212da76ad316178a184ab56d299b43";
@@ -145,13 +145,14 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipi
 
   /* ---------- 4. 调 DustCollector ---------- */
   console.log('⏳  Sending transaction …');
-  console.log(    {
+  console.log(
+       {
         commands,
         inputs,
         deadline,
         targetToken: targetToken,
         dstChain:    dstChain,
-        dstDomain:   0,
+        dstDomain:   5,
         recipient:   recipient,
         arbiterFee:  arbiterFee,
         destinationCaller: DESTINATION_CALLER,
@@ -167,7 +168,8 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipi
           payee: FEE_PAYEE
         },
         estimatedCost: estimatedCost
-    });
+    },
+  );
   const tx = await DustCollector.batchCollectWithUniversalRouter(
     {
         commands,
@@ -175,7 +177,7 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipi
         deadline,
         targetToken: targetToken,
         dstChain:    dstChain,
-        dstDomain:   0,
+        dstDomain:   5,
         recipient:   recipient,
         arbiterFee:  arbiterFee,
         destinationCaller: DESTINATION_CALLER,
@@ -188,7 +190,7 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipi
         },
         feeArgs: {
           dbps: FEE_DBPS,
-          payee: signer.address
+          payee: FEE_PAYEE
         },
         estimatedCost: estimatedCost
     },
@@ -271,7 +273,7 @@ const GAS_DROP_LIMIT = BigInt(process.env.GAS_DROP_LIMIT || '500000'); // gas dr
 const SOLANA_GAS_LIMIT = BigInt(process.env.SOLANA_GAS_LIMIT || '1000000'); // Solana 专用 gas limit (CU)
 const EXECUTOR_API   = process.env.EXECUTOR_API || 'https://executor.labsapis.com';
 const FEE_DBPS = parseInt(process.env.FEE_DBPS || '0');
-const FEE_PAYEE = process.env.FEE_PAYEE || ethers.ZeroHash;
+const FEE_PAYEE = process.env.FEE_PAYEE || ethers.ZeroAddress;
 // 🔧 修正的序列化函数 - 支持两种模式
 function serializeRelayInstructions(apiDstChain, recipient, mode = EXECUTION_MODE) {
   console.log(`🔧 Serializing for destination chain: ${apiDstChain}`);
@@ -389,10 +391,11 @@ async function getQuoteFromExecutor(apiSrcChain, apiDstChain, recipient) {
 async function main() {
     let apiSrcChain = 30;
     let apiDstChain = 1;
+    let userAddress = "HD4ktk6LUewd5vMePdQF6ZtvKi3mC41AD3ZM3qJW8N8e";
     const { signedQuote, relayInstructions, estimatedCost } = await getQuoteFromExecutor(
       apiSrcChain,
       apiDstChain,
-      "HD4ktk6LUewd5vMePdQF6ZtvKi3mC41AD3ZM3qJW8N8e"  // 传递原始地址，函数内部会处理转换
+      userAddress  // 传递原始地址，函数内部会处理转换
     );
 // const DustCollector = await ethers.deployContract("DustCollectorUniversalPermit2CCTPRaw", 
 //     [UNIVERSAL_ROUTER, PERMIT2, "0xbd8d42f40a11b37bD1b3770D754f9629F7cd5679",  "0x52389e164444e68178ABFa97d32908f00716A408"]
@@ -413,19 +416,22 @@ async function main() {
   {
     addr :  USDT,
     dec  :  6,
-    amt  :  '1',
+    amt  :  '0.01',
     amtWei: 0n,
     fee  : [100],
     path : [USDT, USDC]
   },
 ];
+    const buffer = estimatedCost > 0n ? estimatedCost / 1n : BigInt('10000000000000000000000');
+    const actualMsgValue = estimatedCost + buffer;
   const userATA = getAssociatedTokenAddressSync(
       new PublicKey("EfqRM8ZGWhDTKJ7BHmFvNagKVu3AxQRDQs8WMMaoBCu6"), // wormhole USDC mint
       new PublicKey("HD4ktk6LUewd5vMePdQF6ZtvKi3mC41AD3ZM3qJW8N8e"),
       true,
   );
-  await swap(DustCollector, TOKENS, signer, USDC, apiDstChain, base58Decode(userATA.toBase58()), arbiterFee, msgFee + arbiterFee, false, 
-    signedQuote, relayInstructions, estimatedCost);
+  let recipientBytes32 = addressToBytes32(userATA.toBase58());
+  await swap(DustCollector, TOKENS, signer, USDC, apiDstChain, recipientBytes32, arbiterFee, msgFee + arbiterFee, false, 
+    signedQuote, relayInstructions, actualMsgValue);
 // console.log(await DustCollector.cctp());
 //   USDC-WETH-DAI
 //   let TOKENS = [
