@@ -7,6 +7,13 @@ import {
     PublicKey,
 } from "@solana/web3.js";
 import axios from 'axios';
+import { serialize } from 'binary-layout';
+import { SignerWithAddress } from '@nomicfoundation/hardhat-ethers/signers'
+import {
+  getPermitSignature, PermitSingle,PermitBatch, PermitDetails,getPermitBatchSignature,
+  signPermit
+} from '../test/permit2'
+import { abi as PERMIT2_ABI } from '../test/permit2/src/interfaces/IPermit2.sol/IPermit2.json'
 
 const USDC  = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const WETH  = "0x4200000000000000000000000000000000000006";
@@ -17,125 +24,106 @@ const AAVE  = "0x63706e401c06ac8513145b7687a14804d17f814b";
 
 const PERMIT2       = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 const COLLECTOR     = "0x9D7227D1EcF129e7E481FFA9e64BB96448EDb68d";
-// const COLLECTOR     = "0x35407375AC1f0b51B90A5ad28a4A73F3FD35E717";
-// const COLLECTOR     = "0xa124646027Dcd8F04aE25e67fE06FC34980650eE"; raw
-const WORMHOLE_CORE = "0xbebdb6C8ddC678FfA9f8748f85C815C556Dd8ac6";
-const UNIVERSAL_ROUTER = "0x6ff5693b99212da76ad316178a184ab56d299b43";
-
+const USDC_MINT     = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 /* ---------- ABI ---------- */
 const ERC20_ABI = [
   'function approve(address,uint256) external returns (bool)',
   'function allowance(address,address) view returns (uint256)'
 ];
 
-const PERMIT2_ABI = [
-  // returns (uint160 amount, uint48 expiration, uint48 nonce)
-  'function allowance(address owner,address token,address spender) view returns (uint160,uint48,uint48)',
-  'function approve(address token,address spender,uint160 amount,uint48 expiration) external'
-];
-
-// function base58Decode(str) {
-//   const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-//   let result = 0n;
-//   for (let i = 0; i < str.length; i++) {
-//     const index = alphabet.indexOf(str[i]);
-//     if (index === -1) throw new Error('Invalid base58 character');
-//     result = result * 58n + BigInt(index);
-//   }
-  
-//   const bytes = [];
-//   while (result > 0n) {
-//     bytes.unshift(Number(result % 256n));
-//     result = result / 256n;
-//   }
-  
-//   for (let i = 0; i < str.length && str[i] === '1'; i++) {
-//     bytes.unshift(0);
-//   }
-//   console.log(bytes);
-//   return new Uint8Array(bytes);
-// }
-
-// function toBytes32(addr) {
-//   if (!addr || addr.trim() === '') return ethers.ZeroHash;
-  
-//   addr = addr.trim();
-  
-//   if (addr.startsWith('0x')) {
-//     return '0x' + addr.slice(2).toLowerCase().padStart(64, '0');
-//   } else if (addr.length === 44 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(addr)) {
-//     // Solana 地址
-//     const decoded = base58Decode(addr);
-//     if (decoded.length !== 32) throw new Error(`Invalid Solana address length: ${decoded.length}`);
-//     return '0x' + Array.from(decoded).map(b => b.toString(16).padStart(2, '0')).join('');
-//   } else {
-//     const hex = addr.replace(/^0x/, '');
-//     if (!/^[0-9a-fA-F]+$/.test(hex)) throw new Error(`Invalid address format: ${addr}`);
-//     return '0x' + hex.toLowerCase().padStart(64, '0');
-//   }
-// }
-/**
- * 为指定 token 确保：
- * ① ERC20 → Permit2 已授权；
- * ② Permit2 → Collector 已授权。
- */
-async function ensurePermit2(token, owner, amount) {
-  const erc20  = new ethers.Contract(token, ERC20_ABI  , owner);
-  const permit = new ethers.Contract(PERMIT2, PERMIT2_ABI, owner);
-
-  /* === 1. ERC20 → Permit2 === */
-  const curErc20Allow = await erc20.allowance(owner.address, PERMIT2);
-  if (curErc20Allow < amount) {
-    console.log(`  · Approving ERC20 → Permit2   (${token})`);
-    await (await erc20.approve(PERMIT2, ethers.MaxUint256)).wait();
-  }
-
-  /* === 2. Permit2 → DustCollector === */
-  const [allowAmt] = await permit.allowance(owner.address, token, COLLECTOR);
-  if (allowAmt < amount) {
-    console.log(`  · Approving Permit2 → Collector (${token})`);
-    const maxUint160 = (1n << 160n) - 1n;               // 2¹⁶⁰-1
-    const expiration = Math.floor(Date.now() / 1e3) + 3600 * 24 * 30; // 30 天
-    await (await permit.approve(token, COLLECTOR, maxUint160, expiration)).wait();
-  }
+async function ensureApproval(token:string, wallet:SignerWithAddress, spender:string, amount:bigint) {
+    const t  = new ethers.Contract(token, ERC20_ABI  , wallet);
+    const allowance = await t.allowance(wallet.address, spender);
+    if (allowance < amount) {
+      console.log(`⏳ [Approve] ${token} -> Permit2`);
+      // TIPS:前端需要签名
+      await (await t.approve(spender, ethers.MaxUint256)).wait();
+      console.log(`✅ Approved`);
+    }
 }
 
-async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipient, arbiterFee, value, isToETH:boolean, signedQuote, relayInstructions, estimatedCost) {
-  const abi      = ethers.AbiCoder.defaultAbiCoder();
-  for (const tk of TOKENS) {
-    tk.amtWei = ethers.parseUnits(tk.amt, tk.dec);
-    await ensurePermit2(tk.addr, signer, tk.amtWei);
+async function signPerimit(TOKENS:any, owner:SignerWithAddress) {
+  const permit2 = new ethers.Contract(PERMIT2, PERMIT2_ABI, owner);
+  const ChainId = 8453; // base mainnet
+   /* step 0: prepare amounts */
+   for (const tk of TOKENS) tk.amtWei = ethers.parseUnits(tk.amt, tk.dec);
+   /* step 1: ERC20 -> Permit2 approvals */
+    console.log('📋 Step 1) ERC20 approvals');
+    // 一个token只需要approve一次
+    for (const tk of TOKENS)
+      await ensureApproval(tk.addr, owner, PERMIT2, tk.amtWei);
+
+    /* step 2: build batch-permit typed-data & sign */
+    console.log('\n📋 Step 2) Build & sign Permit2 batch');
+
+    const expiration  = Math.floor(Date.now() / 1e3) + 86400 * 30;   // 30d
+    const sigDeadline = Math.floor(Date.now() / 1e3) + 3600;        // 1h
+
+    const details:PermitDetails[] = [];
+    for (const tk of TOKENS) {
+      const [, , nonce] = await permit2.allowance(owner.address, tk.addr, COLLECTOR);
+      details.push({ token: tk.addr, amount: tk.amtWei, expiration, nonce });
+    }
+    const permitBatch:PermitBatch = { details, spender: COLLECTOR, sigDeadline };
+
+    const domain = { name: 'Permit2', chainId:ChainId, verifyingContract: PERMIT2 };
+    const types  = {
+      PermitBatch:   [{ name: 'details', type: 'PermitDetails[]' }, { name: 'spender', type: 'address' }, { name: 'sigDeadline', type: 'uint256' }],
+      PermitDetails: [{ name: 'token', type: 'address' }, { name: 'amount', type: 'uint160' }, { name: 'expiration', type: 'uint48' }, { name: 'nonce', type: 'uint48' }]
+    };
+
+    // TIPS:前端需要签名
+    const signature = await owner.signTypedData(domain, types, permitBatch);
+    console.log('🔑 Signature:', signature, '\n');
+
+    /* step 3: send permit tx */
+    console.log('📋 Step 3) Send permit() tx');
+    // TIPS:前端需要签名
+    const permitTx = await permit2["permit(address,((address,uint160,uint48,uint48)[],address,uint256),bytes)"](owner.address, permitBatch, signature);
+    console.log('⛓️  Permit TxHash:', permitTx.hash);
+    await permitTx.wait();
+    console.log('✅ Permit tx confirmed\n');
   }
+
+// 参数:
+// DustCollector: cctp 版本dust collector 合约
+// TOKENS: 需要swap的token数组信息
+// signer:签名钱包
+// targetToken: 要swap成什么token
+// dstChain: 如果需要跨链，这里是目标链的chain id,为0不需要跨链
+// dstDomain
+// recipient: 如果需要跨链，这里是另一条链上的接收地址,为ZeroHash不需要跨链
+// arbiterFee: 给relayer的费用，一般可以为0
+// value: 需要转的eth，看具体场景取值
+// signedQuote, relayInstructions, estimatedCost:调用接口得到的返回值
+async function swap(DustCollector, TOKENS, signer, targetToken, dstChain,dstDomain, recipient, arbiterFee, value, signedQuote, relayInstructions, estimatedCost) {
+  const abi      = ethers.AbiCoder.defaultAbiCoder();
+  // 把所有token授权给permit2
+  await signPerimit(TOKENS, signer)
 
   let commands = '';
   const inputs   = [];
   for (const tk of TOKENS) {
-    commands += '00';
-    inputs.push(
-    abi.encode(
-      ['address', 'uint256', 'uint256', 'bytes', 'bool'],
-      [COLLECTOR, tk.amtWei, 0, encodePathAndFee(tk.path, tk.fee), false]
-    )
-    );
+    if(tk.version == "V3") {
+      commands += '00';
+      inputs.push(
+        abi.encode(
+          ['address', 'uint256', 'uint256', 'bytes', 'bool'],
+          [COLLECTOR, tk.amtWei, 0, encodePathAndFee(tk.path, tk.fee), false]
+        )
+      );
+    } else if(tk.version == "V2") {
+        commands += '08';
+        inputs.push(
+          abi.encode(
+            ['address', 'uint256', 'uint256', 'address[]', 'bool'],
+            [COLLECTOR, tk.amtWei, 0, tk.path, false]
+          )
+        );
+    }
   }
 
   commands  = '0x' + commands;
-  if(isToETH) {
-      // commands += '05';
-      // inputs.push(
-      //     abi.encode(
-      //       ['address','address','uint256'],
-      //       [WETH, COLLECTOR, 300000000000000]
-      //     )
-      // );
-      commands += '0c';
-      inputs.push(
-          abi.encode(
-            ['address','uint256'],
-            [COLLECTOR, 0]
-          )
-      );
-  }
 
   const deadline = Math.floor(Date.now() / 1e3) + 1800;  // 30 分钟
 
@@ -145,31 +133,6 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipi
 
   /* ---------- 4. 调 DustCollector ---------- */
   console.log('⏳  Sending transaction …');
-  console.log(
-       {
-        commands,
-        inputs,
-        deadline,
-        targetToken: targetToken,
-        dstChain:    dstChain,
-        dstDomain:   5,
-        recipient:   recipient,
-        arbiterFee:  arbiterFee,
-        destinationCaller: DESTINATION_CALLER,
-        maxFee: MAX_FEE,
-        minFinalityThreshold: MIN_FINALITY_THRESHOLD,
-        executorArgs: {
-            refundAddress: signer.address,
-            signedQuote: signedQuote,
-            instructions: relayInstructions
-        },
-        feeArgs: {
-          dbps: FEE_DBPS,
-          payee: FEE_PAYEE
-        },
-        estimatedCost: estimatedCost
-    },
-  );
   const tx = await DustCollector.batchCollectWithUniversalRouter(
     {
         commands,
@@ -177,7 +140,7 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipi
         deadline,
         targetToken: targetToken,
         dstChain:    dstChain,
-        dstDomain:   5,
+        dstDomain:   dstDomain,
         recipient:   recipient,
         arbiterFee:  arbiterFee,
         destinationCaller: DESTINATION_CALLER,
@@ -196,7 +159,7 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipi
     },
     pullTokens,
     pullAmounts,
-    { value: estimatedCost }
+    { value: value }
   );
 
   console.log(`📨  Tx hash: ${tx.hash}`);
@@ -265,91 +228,169 @@ function addressToBytes32(address) {
   }
 }
 // 🆕 模式选择配置
-const EXECUTION_MODE = process.env.EXECUTION_MODE || 'gas'; // 'gas' 或 'drop'
+const EXECUTION_MODE = process.env.EXECUTION_MODE || 'drop'; // 'gas' 或 'drop'
 const DESTINATION_CALLER = process.env.DESTINATION_CALLER || ethers.ZeroHash;
 const MAX_FEE = BigInt(process.env.MAX_FEE || '100');
 const MIN_FINALITY_THRESHOLD = parseInt(process.env.MIN_FINALITY_THRESHOLD || '0');
-const GAS_DROP_LIMIT = BigInt(process.env.GAS_DROP_LIMIT || '500000'); // gas drop 模式的 gas limit
+const GAS_DROP_LIMIT = BigInt(process.env.GAS_DROP_LIMIT || '1000000'); // gas drop 模式的 gas limit
 const SOLANA_GAS_LIMIT = BigInt(process.env.SOLANA_GAS_LIMIT || '1000000'); // Solana 专用 gas limit (CU)
+const SOLANA_GAS_DROP = BigInt(process.env.SOLANA_GAS_DROP || '500000');
 const EXECUTOR_API   = process.env.EXECUTOR_API || 'https://executor.labsapis.com';
 const FEE_DBPS = parseInt(process.env.FEE_DBPS || '0');
 const FEE_PAYEE = process.env.FEE_PAYEE || ethers.ZeroAddress;
-// 🔧 修正的序列化函数 - 支持两种模式
+
+// 🔧 Binary Layout Definitions
+// Custom conversion for hex strings (JavaScript version)
+const hexConversion = {
+  to: (encoded) => {
+    return `0x${Buffer.from(encoded).toString('hex')}`;
+  },
+  from: (decoded) => {
+    const hex = decoded.startsWith('0x') ? decoded.slice(2) : decoded;
+    return Uint8Array.from(Buffer.from(hex, 'hex'));
+  },
+};
+
+// Define instruction layouts according to official spec
+const gasInstructionLayout = [
+  { name: "gasLimit", binary: "uint", size: 16 },
+  { name: "msgValue", binary: "uint", size: 16 },
+];
+
+const gasDropOffInstructionLayout = [
+  { name: "dropOff", binary: "uint", size: 16 },
+  { name: "recipient", binary: "bytes", size: 32, custom: hexConversion },
+];
+
+const relayInstructionLayout = [
+  {
+    name: "request",
+    binary: "switch",
+    idSize: 1,
+    idTag: "type",
+    layouts: [
+      [[1, "GasInstruction"], gasInstructionLayout],
+      [[2, "GasDropOffInstruction"], gasDropOffInstructionLayout],
+    ],
+  },
+];
+
+const relayInstructionsLayout = [
+  {
+    name: "requests",
+    binary: "array",
+    layout: relayInstructionLayout,
+  },
+];
+// 🔧 Serialization using binary-layout (MODIFIED to support multiple instructions)
 function serializeRelayInstructions(apiDstChain, recipient, mode = EXECUTION_MODE) {
-  console.log(`🔧 Serializing for destination chain: ${apiDstChain}`);
-  console.log(`🎯 Execution Mode: ${mode.toUpperCase()}`);
+  console.log(`🔧 Serializing relay instructions with binary-layout...`);
+  console.log(`   📍 Destination chain: ${apiDstChain}`);
+  console.log(`   🎯 Execution mode: ${mode.toUpperCase()}`);
+  
+  let instructions = [];
   
   if (mode === 'drop') {
-    // 🔄 模式1: GasDropOffInstruction - 自动gas发送到指定地址
+    // Mode 1: GasDropOffInstruction - auto gas delivery
+    console.log(`   📦 Using GasDropOffInstruction for ${apiDstChain === 1 ? 'Solana' : 'EVM'} chain`);
+    const recipientBytes32 = addressToBytes32(recipient);
+    
+    // Use appropriate gas limit based on destination chain
+    const dropOffAmount = apiDstChain === 1 ? SOLANA_GAS_DROP : GAS_DROP_LIMIT;
+    
+    // 1. Add GasDropOffInstruction
+    instructions.push({
+      request: {
+        type: "GasDropOffInstruction",
+        dropOff: dropOffAmount,
+        recipient: recipientBytes32
+      }
+    });
+    
+    // 2. 🆕  also add GasInstruction to set compute unit limit
     if (apiDstChain === 1) {
-      // Solana: 使用 GasInstruction（Solana 不支持 dropOff）
-      const dropOffHex = GAS_DROP_LIMIT.toString(16).padStart(32, '0');
-      const recipientHex = addressToBytes32(recipient).replace('0x', '');
-      return '0x02' +                              // Type 1: GasDropOffInstruction
-             dropOffHex +                        // gasLimit: 动态设置的 CU (16 bytes)
-             recipientHex;   // msgValue: 0 (16 bytes)
-    } else {
-      // EVM 链: 使用 GasDropOffInstruction
-      console.log(`🔧 Using GasDropOffInstruction for EVM chain`);
-      
-      // 将 gas limit 转换为16字节的十六进制
-      const dropOffHex = GAS_DROP_LIMIT.toString(16).padStart(32, '0'); // 16 bytes
-      
-      // 确保 recipient 是正确的 32 bytes 格式
-      const recipientHex = addressToBytes32(recipient).replace('0x', '');
-      
-      const result = '0x02' + dropOffHex + recipientHex;
-      
-      console.log(`🔧 DropOff (16 bytes): ${dropOffHex} (${GAS_DROP_LIMIT} gas)`);
-      console.log(`🔧 Recipient (32 bytes): ${recipientHex}`);
-      console.log(`🔧 Final relayInstructions: ${result}`);
-      console.log(`🔧 Total length: ${result.length} chars (should be 130)`);
-      
-      return result;
+      console.log(`   🚀 Adding GasInstruction for Solana compute unit limit`);
+      instructions.push({
+        request: {
+          type: "GasInstruction",
+          gasLimit: SOLANA_GAS_LIMIT,  // 1.4M CU
+          msgValue: 5000000n  // msg value needed
+        }
+      });
+    }else {
+      console.log(`  🚀 Adding GasInstruction for for EVM chain`);
+      instructions.push({
+        request: {
+          type: "GasInstruction",
+          gasLimit: 200000n,  // 200k gas
+          msgValue: 0n        // No msg value
+        }
+      });
     }
+    
+    console.log(`   💸 Drop off amount: ${dropOffAmount} ${apiDstChain === 1 ? 'lamports' : 'gas'}`);
+    console.log(`   📍 Recipient: ${recipient}`);
+    if (apiDstChain === 1) {
+      console.log(`   💻 Compute Unit Limit: ${SOLANA_GAS_LIMIT} CU`);
+    }
+    
   } else {
-    // 🚀 模式2: GasInstruction - 需要手动deposit gas
-    console.log(`🔧 Using GasInstruction mode (manual gas required)`);
+    // Mode 2: GasInstruction - manual gas deposit required
+    console.log(`   🚀 Using GasInstruction (manual gas deposit required)`);
     
-    let gasLimit;
     if (apiDstChain === 1) {
-      // Solana: 使用更高的计算单位 - 1,000,000 CU
-      gasLimit = SOLANA_GAS_LIMIT.toString(16).padStart(32, '0'); // 动态设置
-
-      const result = '0x01' +                        // Type 1: GasInstruction
-             gasLimit +                              // gasLimit: 16 bytes
-             '000000000000000000000000000f4240';    //manually set to 1,000,000 CU
-
-      console.log(`🔧 Solana gasLimit: ${SOLANA_GAS_LIMIT} CU`);
-      console.log(`🔧 EVM gasLimit: 200,000 gas`);
-      console.log(`🔧 GasLimit (16 bytes): ${gasLimit}`);
-      console.log(`🔧 MsgValue (16 bytes): 000000000000000000000000000f4240`);
-      console.log(`🔧 Final relayInstructions: ${result}`);
-      console.log(`🔧 Total length: ${result.length} chars (should be 66)`);
-      return  result;
+      // Solana: Higher compute units
+      instructions.push({
+        request: {
+          type: "GasInstruction",
+          gasLimit: SOLANA_GAS_LIMIT,
+          msgValue: 5000000n // 1M lamports
+        }
+      });
     } else {
-      // EVM limited: 200,000 gas 
-      gasLimit = '00000000000000000000000000030d40'; // 200,000 gas
-
-      const result = '0x01' +                        // Type 1: GasInstruction
-                     gasLimit +                      // gasLimit: 16 bytes
-                     '00000000000000000000000000000000'; // msgValue: 0 (16 bytes)
-      console.log(`🔧 EVM gasLimit: 200,000 gas`);
-      console.log(`🔧 GasLimit (16 bytes): ${gasLimit}`);
-      console.log(`🔧 MsgValue (16 bytes): 00000000000000000000000000000000`);
-      console.log(`🔧 Final relayInstructions: ${result}`);
-      console.log(`🔧 Total length: ${result.length} chars (should be 66)`);
-
-      return result;
+      // EVM chains: Standard gas limit
+      instructions.push({
+        request: {
+          type: "GasInstruction",
+          gasLimit: 200000n, // 200k gas
+          msgValue: 0n       // No msg value
+        }
+      });
     }
-    
-
   }
+  
+  // Create the instructions array
+  const relayInstructions = {
+    requests: instructions  // Now supports multiple instructions
+  };
+  
+  // Serialize using binary-layout
+  const serialized = serialize(relayInstructionsLayout, relayInstructions);
+  const result = '0x' + Buffer.from(serialized).toString('hex');
+  
+  // Log details
+  console.log(`   📊 Total instructions: ${instructions.length}`);
+  instructions.forEach((inst, index) => {
+    const instructionType = inst.request.type;
+    console.log(`   📋 Instruction ${index + 1}:`);
+    console.log(`      - Type: ${instructionType}`);
+    if (instructionType === "GasInstruction") {
+      console.log(`      - Gas Limit: ${inst.request.gasLimit}`);
+      console.log(`      - Msg Value: ${inst.request.msgValue}`);
+    } else {
+      console.log(`      - Drop Off: ${inst.request.dropOff}`);
+      console.log(`      - Recipient: ${inst.request.recipient}`);
+    }
+  });
+  console.log(`   📝 Serialized: ${result}`);
+  console.log(`   📏 Length: ${result.length} chars`);
+  
+  return result;
 }
 
 
 
-// 🔧 修正的 API 调用函数
+// 🔧 Get quote from executor API
 async function getQuoteFromExecutor(apiSrcChain, apiDstChain, recipient) {
   const relayInstructions = serializeRelayInstructions(apiDstChain, recipient);
   
@@ -359,6 +400,7 @@ async function getQuoteFromExecutor(apiSrcChain, apiDstChain, recipient) {
     relayInstructions
   };
   
+  console.log('\n📤 Requesting quote from executor...');
   console.log('🔍 API Request:', JSON.stringify(requestPayload, null, 2));
   
   try {
@@ -370,8 +412,8 @@ async function getQuoteFromExecutor(apiSrcChain, apiDstChain, recipient) {
       }
     });
     
-    console.log('✅ API Response received');
-    console.log('📊 Estimated cost:', res.data.estimatedCost || 'N/A');
+    console.log('✅ Quote received successfully');
+    console.log(`📊 Estimated cost: ${res.data.estimatedCost || 'N/A'} wei`);
     
     return {
       signedQuote: res.data.signedQuote,
@@ -389,75 +431,53 @@ async function getQuoteFromExecutor(apiSrcChain, apiDstChain, recipient) {
 }
 
 async function main() {
-    let apiSrcChain = 30;
-    let apiDstChain = 1;
-    let userAddress = "HD4ktk6LUewd5vMePdQF6ZtvKi3mC41AD3ZM3qJW8N8e";
-    const { signedQuote, relayInstructions, estimatedCost } = await getQuoteFromExecutor(
-      apiSrcChain,
-      apiDstChain,
-      userAddress  // 传递原始地址，函数内部会处理转换
-    );
-// const DustCollector = await ethers.deployContract("DustCollectorUniversalPermit2CCTPRaw", 
-//     [UNIVERSAL_ROUTER, PERMIT2, "0xbd8d42f40a11b37bD1b3770D754f9629F7cd5679",  "0x52389e164444e68178ABFa97d32908f00716A408"]
-// );
-  
-//   await DustCollector.waitForDeployment();
-  
-//   console.log(
-//     `deployed to ${DustCollector.target}`
-//   );
   const DustCollector_factory = await ethers.getContractFactory("DustCollectorUniversalPermit2CCTP");
   const DustCollector = await DustCollector_factory.attach(COLLECTOR);
   const signer = await ethers.provider.getSigner();
-  let msgFee = 0n;
   let arbiterFee = 0n;
-//   // USDT-USDC
+  // 例子1: 1个token通过swap转为一个token， 下面例子具体是USDT转为USDT,并通过CCTP协议跨链到SOLANA
+  // 实现步骤如下:
+  // 1. 通过https://apptest.bolarity.xyz/router_api/quote
+  //    查询得到USDT转USDC的fees跟tokens, version,
+  // 2. 构造TOKENS数组(如果是多个tokenswap成一个token，则数组成员相应的填充多个token信息)
   let TOKENS = [
   {
     addr :  USDT,
     dec  :  6,
-    amt  :  '0.01',
+    amt  :  '0.01', // 要转的金额，这里的0.01,代表0.011 USDT
     amtWei: 0n,
-    fee  : [100],
-    path : [USDT, USDC]
+    fee  : [100], // 查询得到的fees
+    path : [USDT, USDC], // 查询得到的tokens
+    version : "V3",
   },
 ];
-    const buffer = estimatedCost > 0n ? estimatedCost / 1n : BigInt('10000000000000000000000');
-    const actualMsgValue = estimatedCost + buffer;
-  const userATA = getAssociatedTokenAddressSync(
-      new PublicKey("EfqRM8ZGWhDTKJ7BHmFvNagKVu3AxQRDQs8WMMaoBCu6"), // wormhole USDC mint
-      new PublicKey("HD4ktk6LUewd5vMePdQF6ZtvKi3mC41AD3ZM3qJW8N8e"),
-      true,
-  );
-  let recipientBytes32 = addressToBytes32(userATA.toBase58());
-  await swap(DustCollector, TOKENS, signer, USDC, apiDstChain, recipientBytes32, arbiterFee, msgFee + arbiterFee, false, 
-    signedQuote, relayInstructions, actualMsgValue);
-// console.log(await DustCollector.cctp());
-//   USDC-WETH-DAI
-//   let TOKENS = [
-//   {
-//     addr :  USDC,
-//     dec  :  6,
-//     amt  :  '1',
-//     amtWei: 0n,
-//     fee  : [100, 3000],
-//     path : [USDC, WETH, AAVE]
-//   },
-// ];
-// await swap(DustCollector, TOKENS, signer, AAVE, 0, ethers.ZeroHash, arbiterFee, msgFee + arbiterFee, false);
-//   // USDT-WETH
-//   let TOKENS = [
-//   {
-//     addr :  USDT,
-//     dec  :  6,
-//     amt  :  '0.9',
-//     amtWei: 0n,
-//     fee  : [500],
-//     path : [USDT, WETH]
-//   },
-// ];
-
-//   await swap(DustCollector, TOKENS, signer, WETH, 0, ethers.ZeroHash, arbiterFee, msgFee + arbiterFee, true);
+    let dstChain = 2; // 要跨跨链的目标链ID,如果为0,则不跨链，具体的值可参考 https://wormhole.com/docs/products/reference/chain-ids/
+    let dstDomain = 0; // https://developers.circle.com/cctp/supported-domains
+    let srcChain = 30; // 要跨跨链的源链ID，具体的值可参考 https://wormhole.com/docs/products/reference/chain-ids/
+    let recipient = "0x1Cdc84ba2A54F50997dDB06B0a6DfCb4868DB098"; // 跨链到的目标链地址
+    let recipientBytes32;
+    let signedQuote = "0x00";
+    let relayInstructions = "0x00";
+    let estimatedCost = 0n;
+    if(dstChain != 0) { //需要跨链
+        ({ signedQuote, relayInstructions, estimatedCost } = await getQuoteFromExecutor(
+          srcChain,
+          dstChain,
+          recipient
+        ));
+      if(dstChain == 1) { // SOLANA
+          const userATA = getAssociatedTokenAddressSync(
+            new PublicKey(USDC_MINT), // USDC mint
+            new PublicKey(recipient),
+            true,
+          );
+        recipient = userATA.toBase58();
+      }
+      recipientBytes32 = addressToBytes32(recipient);
+    }
+  estimatedCost = estimatedCost;
+  await swap(DustCollector, TOKENS, signer, USDC, dstChain, dstDomain, recipientBytes32, arbiterFee, arbiterFee + estimatedCost,
+    signedQuote, relayInstructions, estimatedCost);
 }
 
 // We recommend this pattern to be able to use async/await everywhere

@@ -209,9 +209,8 @@ async function main() {
   const signer = await ethers.provider.getSigner();
   let msgFee = 0n;
   let arbiterFee = 0n;
-  const core = new ethers.Contract(WORMHOLE_CORE, CORE_ABI, ethers.provider);
-  msgFee = await core.messageFee();
-  console.log(`📦 MessageFee: ${msgFee.toString()} wei`);
+  const dstChain = 0; // 跨链的时候，需要填写这里的值，具体的值可参考 https://wormhole.com/docs/products/reference/chain-ids/
+
 
   // 例子1: 2个token通过swap转为一个token， 下面例子具体是USDC跟DAI, 转为USDT
   // 实现步骤如下:
@@ -240,7 +239,14 @@ async function main() {
   },
 ];
 
-  await swap(DustCollector, TOKENS, signer, USDT, 0, ethers.ZeroHash, arbiterFee, msgFee + arbiterFee);
+  // 如果有跨链需求，才获取message fee
+  if(dstChain != 0) {
+    const core = new ethers.Contract(WORMHOLE_CORE, CORE_ABI, ethers.provider);
+    msgFee = await core.messageFee();
+    console.log(`📦 MessageFee: ${msgFee.toString()} wei`);
+  }
+
+  await swap(DustCollector, TOKENS, signer, USDT, dstChain, ethers.ZeroHash, arbiterFee, msgFee + arbiterFee);
 //   // USDC-WETH-DAI
 //   let TOKENS = [
 //   {
