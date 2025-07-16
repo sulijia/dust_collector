@@ -322,7 +322,7 @@ function serializeRelayInstructions(apiDstChain, recipient, mode = EXECUTION_MOD
       instructions.push({
         request: {
           type: "GasInstruction",
-          gasLimit: 200000n,  // 200k gas
+          gasLimit: 400000n,  // gas, arb 252,206 
           msgValue: 0n        // No msg value
         }
       });
