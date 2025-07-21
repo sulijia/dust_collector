@@ -938,17 +938,126 @@ describe("Dust collector", function () {
   //     );
   //     expect(await ethers.provider.getBalance(DustCollectorAddress)).to.be.above(ethers.parseEther('0'))
   // });
+  async function delegateToContract(wallet, provider, targetContract) {
+    console.log('\n🔗 ====== EIP-7702 DELEGATION PROCESS ======');
+    
+    const code = await provider.getCode(wallet.address);
+    
+    if (code !== "0x") {
+      if (code.startsWith("0xef0100")) {
+        const currentDelegation = "0x" + code.slice(8);
+        console.log("⚠️  EOA currently delegated to:", currentDelegation);
+        
+        if (currentDelegation.toLowerCase() === targetContract.toLowerCase()) {
+          console.log("✅ Already delegated to target contract. Ready to proceed!");
+          return true;
+        }
+      }
+    } else {
+      console.log("📋 EOA has no current delegation. Will delegate now...");
+    }
 
-    it("uniswap v3 unwrap weth with cctp test2", async function () {
-    const DustCollectorCCTP = await ethers.getContractFactory("DustCollectorUniversalPermit2CCTP");
-    const DustCollectorCCTPContract = await DustCollectorCCTP.deploy(routerAddress, permit2Address, WORMHOLE_CCTP_ADDRESS, alice.address);
-    const DustCollectorCCTPAddress = await DustCollectorCCTPContract.getAddress();
-    DustCollectorAddress = DustCollectorCCTPAddress;
+    const contractCode = await provider.getCode(targetContract);
+    if (contractCode === "0x") {
+      throw new Error("Target address is not a contract");
+    }
+
+    const network = await provider.getNetwork();
+    const currentNonce = await wallet.getNonce();
+    
+    console.log("Network Chain ID:", network.chainId);
+    console.log("Delegating EOA to:", targetContract);
+
+    const authorization = await wallet.authorize({
+      address: targetContract,
+      nonce: currentNonce + 1,
+      chainId: network.chainId,
+    });
+
+    const tx = await wallet.sendTransaction({
+      type: 4,
+      to: wallet.address,
+      authorizationList: [authorization],
+    });
+
+    console.log("✅ Sent delegate tx:", tx.hash);
+    const receipt = await tx.wait();
+    console.log("✅ Confirmed in block:", receipt.blockNumber);
+
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    let retries = 0;
+    const maxRetries = 5;
+    
+    while (retries < maxRetries) {
+      const newCode = await provider.getCode(wallet.address);
+      
+      if (newCode.startsWith("0xef0100")) {
+        const delegatedTo = "0x" + newCode.slice(8);
+        if (delegatedTo.toLowerCase() === targetContract.toLowerCase()) {
+          console.log("✅ Delegation successful! Delegated to:", delegatedTo);
+          console.log("🎉 EIP-7702 delegation completed successfully!");
+          return true;
+        }
+      }
+      
+      retries++;
+      if (retries < maxRetries) {
+        console.log(`⏳ Retry ${retries}/${maxRetries} - waiting for state update...`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+
+    throw new Error("Failed to verify delegation");
+  }
+
+  async function revokeDelegation(wallet, provider) {
+    console.log('\n🔄 ====== REVOKING EIP-7702 DELEGATION ======');
+    
+    const code = await provider.getCode(wallet.address);
+    if (code === "0x") {
+      console.log("✅ EOA is not currently delegated. No revocation needed.");
+      return true;
+    }
+    
+    const network = await provider.getNetwork();
+    const currentNonce = await wallet.getNonce();
+
+    const authorization = await wallet.authorize({
+      address: '0x0000000000000000000000000000000000000000',
+      nonce: currentNonce + 1,
+      chainId: network.chainId,
+    });
+
+    const tx = await wallet.sendTransaction({
+      type: 4,
+      to: wallet.address,
+      authorizationList: [authorization],
+    });
+
+    console.log("✅ Sent revocation tx:", tx.hash);
+    const receipt = await tx.wait();
+    console.log("✅ Revocation confirmed in block:", receipt.blockNumber);
+
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    const newCode = await provider.getCode(wallet.address);
+    if (newCode === "0x") {
+      console.log("✅ Delegation successfully revoked! EOA restored to normal state.");
+      return true;
+    } else {
+      throw new Error("Failed to verify delegation revocation");
+    }
+  }
+    it("uniswap v3  with cctp 77002 test1", async function () {
+    const DustCollectorCCTP7702 = await ethers.getContractFactory("DustCollector7702");
+    const DustCollectorCCTP7702Contract = await DustCollectorCCTP7702.deploy(routerAddress, WORMHOLE_CCTP_ADDRESS, DustCollectorAddress);
+    const DustCollectorCCTP7702Address = await DustCollectorCCTP7702Contract.getAddress();
+    DustCollectorAddress = DustCollectorCCTP7702Address;
       let TOKENS = [
         { addr: daiTokenAddress, dec: 18, amt: '0.01', fee: 500, amtWei: 0n },
       ];
-
-      await signPerimit(TOKENS, bob);
+    await delegateToContract(bob, bob.provider, DustCollectorAddress);
       /* step 4: build swap commands & call collector */
       console.log('📋 Step 4) Call DustCollector swap');
 
@@ -960,18 +1069,19 @@ describe("Dust collector", function () {
         inputs.push(
           abi.encode(
             ['address','uint256','uint256','bytes','bool'],
-            [DustCollectorAddress, tk.amtWei, 0, encodePathExactInput([tk.addr, usdtTokenAddress]), false]  // payerIsUser = false
+            [bob.address, tk.amtWei, 0, encodePathExactInput([tk.addr, usdtTokenAddress]), false]  // payerIsUser = false
           )
         );
       }
+      await daiToken.transfer(routerAddress,  1000000000000000000000n);
       console.log("before swap:" + await usdtToken.balanceOf(bob.address) + ":"+
       await daiToken.balanceOf(bob.address)+ ":"+
       await usdcToken.balanceOf(bob.address) + ":"+
       await WETHContract.balanceOf(bob.address) + ":"+
       await WETHContract.balanceOf(DustCollectorAddress)
       );
-      const dust = new ethers.Contract(DustCollectorAddress, DustCollectorCCTPContract.interface, bob);
-      const swapTx = await dust.batchCollectWithUniversalRouter(
+      const dust = new ethers.Contract(bob.address, DustCollectorCCTP7702Contract.interface, bob);
+      const swapTx = await dust.batchCollectWithUniversalRouter7702(
         {
           commands,
           inputs,

@@ -19,6 +19,14 @@ interface IWormholeBridge {
         address token, uint256 amount, uint16 dstChain,
         bytes32 recipient, uint256 arbiterFee, uint32 nonce
     ) external payable returns (uint64);
+    function transferTokensWithPayload(
+        address token,
+        uint256 amount,
+        uint16 recipientChain,
+        bytes32 recipient,
+        uint32 nonce,
+        bytes memory payload
+    ) external payable returns (uint64 sequence);
 }
 
 interface IPermit2 {
@@ -55,6 +63,7 @@ contract DustCollectorUniversalPermit2 is Ownable {
         uint16  dstChain;
         bytes32 recipient;
         uint256 arbiterFee;
+        bytes   payload;
     }
 
     /* events */
@@ -172,13 +181,13 @@ contract DustCollectorUniversalPermit2 is Ownable {
     function _bridgeTokens(SwapParams calldata p, uint256 amt) internal {
         uint256 msgFee = core.messageFee();
         IERC20(p.targetToken).safeIncreaseAllowance(address(bridge), amt);
-        uint64 seq = bridge.transferTokens{value: msgFee}(
+        uint64 seq = bridge.transferTokensWithPayload{value: msgFee}(
             p.targetToken,
             amt,
             p.dstChain,
             p.recipient,
-            p.arbiterFee,
-            uint32(block.timestamp)
+            uint32(block.timestamp),
+            p.payload
         );
         IERC20(p.targetToken).approve(address(bridge), 0);
         emit Bridged(msg.sender, p.targetToken, amt, p.dstChain, p.recipient, seq);

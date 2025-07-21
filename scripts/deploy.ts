@@ -22,6 +22,8 @@ const AAVE  = "0x63706e401c06ac8513145b7687a14804d17f814b";
 
 const PERMIT2       = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 const COLLECTOR     = "0xE0166322CFA24d22825123103aC531f056F8a30B";
+// const COLLECTOR     = "0x8fAf8118986EfAdB2B7d00588F538Cf111c01004";// transfer with payload
+const TOKEN_BRIDGE = "0x8d2de8d2f73F1F4cAB472AC9A881C9b123C79627";
 const WORMHOLE_CORE = "0xbebdb6C8ddC678FfA9f8748f85C815C556Dd8ac6";
 const UNIVERSAL_ROUTER = "0x6ff5693b99212da76ad316178a184ab56d299b43";
 
@@ -174,6 +176,8 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipi
 
   commands  = '0x' + commands;
 
+  // const payload = abi.encode(['address'], [COLLECTOR]);
+
   const deadline = Math.floor(Date.now() / 1e3) + 1800;  // 30 分钟
 
   /* ---------- 3. pullTokens & pullAmounts ---------- */
@@ -191,7 +195,8 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipi
       targetToken: targetToken,
       dstChain:    dstChain,
       recipient:   recipient,
-      arbiterFee:  arbiterFee
+      arbiterFee:  arbiterFee,
+      // payload: "0x",
     },
     pullTokens,
     pullAmounts,
@@ -204,12 +209,21 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, recipi
 }
 
 async function main() {
+//   const DustCollector = await ethers.deployContract("DustCollectorUniversalPermit2", 
+//     [UNIVERSAL_ROUTER, TOKEN_BRIDGE, WORMHOLE_CORE, PERMIT2,  "0x52389e164444e68178ABFa97d32908f00716A408"]
+// );
+  
+//   await DustCollector.waitForDeployment();
+  
+//   console.log(
+//     `deployed to ${DustCollector.target}`
+//   );
   const DustCollector_factory = await ethers.getContractFactory("DustCollectorUniversalPermit2");
   const DustCollector = await DustCollector_factory.attach(COLLECTOR);
   const signer = await ethers.provider.getSigner();
   let msgFee = 0n;
   let arbiterFee = 0n;
-  const dstChain = 0; // 跨链的时候，需要填写这里的值，具体的值可参考 https://wormhole.com/docs/products/reference/chain-ids/
+  const dstChain = 1; // 跨链的时候，需要填写这里的值，具体的值可参考 https://wormhole.com/docs/products/reference/chain-ids/
 
 
   // 例子1: 2个token通过swap转为一个token， 下面例子具体是USDC跟DAI, 转为USDT
@@ -220,33 +234,43 @@ async function main() {
   // 2. 构造TOKENS数组
   let TOKENS = [
   {
-    addr :  USDC,
+    addr :  USDT,
     dec  :  6,
-    amt  :  '1', // 要转的金额，这里的1,代表1 USDC
+    amt  :  '0.001', // 要转的金额，这里的1,代表1 USDC
     amtWei: 0n,
     fee  : [100], // 查询得到的fees
-    path : [USDC, USDT], // 查询得到的tokens
+    path : [USDT, USDC], // 查询得到的tokens
     version : "V3",
   },
-  {
-    addr :  DAI,
-    dec  :  18,
-    amt  :  '0.1', // 要转的金额，这里的0.1,代表1 DAI
-    amtWei: 0n,
-    fee  : [100], // 查询得到的fees
-    path : [DAI, USDT], // 查询得到的tokens
-    version : "V3",
-  },
+  // {
+  //   addr :  DAI,
+  //   dec  :  18,
+  //   amt  :  '0.1', // 要转的金额，这里的0.1,代表1 DAI
+  //   amtWei: 0n,
+  //   fee  : [100], // 查询得到的fees
+  //   path : [DAI, USDT], // 查询得到的tokens
+  //   version : "V3",
+  // },
 ];
 
+  let recipient = ethers.ZeroHash;
   // 如果有跨链需求，才获取message fee
   if(dstChain != 0) {
     const core = new ethers.Contract(WORMHOLE_CORE, CORE_ABI, ethers.provider);
     msgFee = await core.messageFee();
     console.log(`📦 MessageFee: ${msgFee.toString()} wei`);
+
+      if(dstChain == 1) { // SOLANA
+      const userATA = getAssociatedTokenAddressSync(
+            new PublicKey("EfqRM8ZGWhDTKJ7BHmFvNagKVu3AxQRDQs8WMMaoBCu6"), // wormhole USDC mint
+            new PublicKey("HD4ktk6LUewd5vMePdQF6ZtvKi3mC41AD3ZM3qJW8N8e"),
+            true,
+        );
+        recipient =toBytes32(userATA.toBase58());
+      }
   }
 
-  await swap(DustCollector, TOKENS, signer, USDT, dstChain, ethers.ZeroHash, arbiterFee, msgFee + arbiterFee);
+  await swap(DustCollector, TOKENS, signer, USDC, dstChain, recipient, arbiterFee, msgFee + arbiterFee);
 //   // USDC-WETH-DAI
 //   let TOKENS = [
 //   {

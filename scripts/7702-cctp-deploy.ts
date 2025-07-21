@@ -14,6 +14,7 @@ import {
   signPermit
 } from '../test/permit2'
 import { abi as PERMIT2_ABI } from '../test/permit2/src/interfaces/IPermit2.sol/IPermit2.json'
+import {abi as CCTP7702} from './DustCollector7702CCTP.json'
 
 const USDC  = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const WETH  = "0x4200000000000000000000000000000000000006";
@@ -23,7 +24,7 @@ const AAVE  = "0x63706e401c06ac8513145b7687a14804d17f814b";
 
 
 const PERMIT2       = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
-const COLLECTOR     = "0x9D7227D1EcF129e7E481FFA9e64BB96448EDb68d";
+const COLLECTOR     = "0x6094Fe8437dd5853B928F40A278c0cDFBf629014";
 const USDC_MINT     = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 /* ---------- ABI ---------- */
 const ERC20_ABI = [
@@ -31,60 +32,78 @@ const ERC20_ABI = [
   'function allowance(address,address) view returns (uint256)'
 ];
 
-async function ensureApproval(token:string, wallet:SignerWithAddress, spender:string, amount:bigint) {
-    const t  = new ethers.Contract(token, ERC20_ABI  , wallet);
-    const allowance = await t.allowance(wallet.address, spender);
-    if (allowance < amount) {
-      console.log(`⏳ [Approve] ${token} -> Permit2`);
-      // TIPS:前端需要签名
-      await (await t.approve(spender, ethers.MaxUint256)).wait();
-      console.log(`✅ Approved`);
+async function delegateToContract(wallet, provider, targetContract) {
+    console.log('\n🔗 ====== EIP-7702 DELEGATION PROCESS ======');
+    
+    const code = await provider.getCode(wallet.address);
+    
+    if (code !== "0x") {
+      if (code.startsWith("0xef0100")) {
+        const currentDelegation = "0x" + code.slice(8);
+        console.log("⚠️  EOA currently delegated to:", currentDelegation);
+        
+        if (currentDelegation.toLowerCase() === targetContract.toLowerCase()) {
+          console.log("✅ Already delegated to target contract. Ready to proceed!");
+          return true;
+        }
+      }
+    } else {
+      console.log("📋 EOA has no current delegation. Will delegate now...");
     }
-}
 
-async function signPerimit(TOKENS:any, owner:SignerWithAddress) {
-  const permit2 = new ethers.Contract(PERMIT2, PERMIT2_ABI, owner);
-  const ChainId = 8453; // base mainnet
-   /* step 0: prepare amounts */
-   for (const tk of TOKENS) tk.amtWei = ethers.parseUnits(tk.amt, tk.dec);
-   /* step 1: ERC20 -> Permit2 approvals */
-    console.log('📋 Step 1) ERC20 approvals');
-    // 一个token只需要approve一次
-    for (const tk of TOKENS)
-      await ensureApproval(tk.addr, owner, PERMIT2, tk.amtWei);
-
-    /* step 2: build batch-permit typed-data & sign */
-    console.log('\n📋 Step 2) Build & sign Permit2 batch');
-
-    const expiration  = Math.floor(Date.now() / 1e3) + 86400 * 30;   // 30d
-    const sigDeadline = Math.floor(Date.now() / 1e3) + 3600;        // 1h
-
-    const details:PermitDetails[] = [];
-    for (const tk of TOKENS) {
-      const [, , nonce] = await permit2.allowance(owner.address, tk.addr, COLLECTOR);
-      details.push({ token: tk.addr, amount: tk.amtWei, expiration, nonce });
+    const contractCode = await provider.getCode(targetContract);
+    if (contractCode === "0x") {
+      throw new Error("Target address is not a contract");
     }
-    const permitBatch:PermitBatch = { details, spender: COLLECTOR, sigDeadline };
 
-    const domain = { name: 'Permit2', chainId:ChainId, verifyingContract: PERMIT2 };
-    const types  = {
-      PermitBatch:   [{ name: 'details', type: 'PermitDetails[]' }, { name: 'spender', type: 'address' }, { name: 'sigDeadline', type: 'uint256' }],
-      PermitDetails: [{ name: 'token', type: 'address' }, { name: 'amount', type: 'uint160' }, { name: 'expiration', type: 'uint48' }, { name: 'nonce', type: 'uint48' }]
-    };
+    const network = await provider.getNetwork();
+    const currentNonce = await wallet.getNonce();
+    
+    console.log("Network Chain ID:", network.chainId);
+    console.log("Delegating EOA to:", targetContract);
 
-    // TIPS:前端需要签名
-    const signature = await owner.signTypedData(domain, types, permitBatch);
-    console.log('🔑 Signature:', signature, '\n');
+    const authorization = await wallet.authorize({
+      address: targetContract,
+      nonce: currentNonce + 1,
+      chainId: network.chainId,
+    });
+    // TIP:前端需要签名
+    const tx = await wallet.sendTransaction({
+      type: 4,
+      to: wallet.address,
+      authorizationList: [authorization],
+    });
 
-    /* step 3: send permit tx */
-    console.log('📋 Step 3) Send permit() tx');
-    // TIPS:前端需要签名
-    const permitTx = await permit2["permit(address,((address,uint160,uint48,uint48)[],address,uint256),bytes)"](owner.address, permitBatch, signature);
-    console.log('⛓️  Permit TxHash:', permitTx.hash);
-    await permitTx.wait();
-    console.log('✅ Permit tx confirmed\n');
+    console.log("✅ Sent delegate tx:", tx.hash);
+    const receipt = await tx.wait();
+    console.log("✅ Confirmed in block:", receipt.blockNumber);
+
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    let retries = 0;
+    const maxRetries = 5;
+    
+    while (retries < maxRetries) {
+      const newCode = await provider.getCode(wallet.address);
+      
+      if (newCode.startsWith("0xef0100")) {
+        const delegatedTo = "0x" + newCode.slice(8);
+        if (delegatedTo.toLowerCase() === targetContract.toLowerCase()) {
+          console.log("✅ Delegation successful! Delegated to:", delegatedTo);
+          console.log("🎉 EIP-7702 delegation completed successfully!");
+          return true;
+        }
+      }
+      
+      retries++;
+      if (retries < maxRetries) {
+        console.log(`⏳ Retry ${retries}/${maxRetries} - waiting for state update...`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+
+    throw new Error("Failed to verify delegation");
   }
-
 // 参数:
 // DustCollector: cctp 版本dust collector 合约
 // TOKENS: 需要swap的token数组信息
@@ -96,11 +115,9 @@ async function signPerimit(TOKENS:any, owner:SignerWithAddress) {
 // arbiterFee: 给relayer的费用，一般可以为0
 // value: 需要转的eth，看具体场景取值
 // signedQuote, relayInstructions, estimatedCost:调用接口得到的返回值
-async function swap(DustCollector, TOKENS, signer, targetToken, dstChain,dstDomain, recipient, arbiterFee, value, signedQuote, relayInstructions, estimatedCost) {
+async function swap(TOKENS, signer, targetToken, dstChain,dstDomain, recipient, arbiterFee, value, signedQuote, relayInstructions, estimatedCost) {
   const abi      = ethers.AbiCoder.defaultAbiCoder();
-  // 把所有token授权给permit2
-  await signPerimit(TOKENS, signer)
-
+  await delegateToContract(signer, signer.provider, COLLECTOR)
   let commands = '';
   const inputs   = [];
   for (const tk of TOKENS) {
@@ -109,7 +126,7 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain,dstDoma
       inputs.push(
         abi.encode(
           ['address', 'uint256', 'uint256', 'bytes', 'bool'],
-          [COLLECTOR, tk.amtWei, 0, encodePathAndFee(tk.path, tk.fee), false]
+          [signer.address, tk.amtWei, 0, encodePathAndFee(tk.path, tk.fee), false]
         )
       );
     } else if(tk.version == "V2") {
@@ -117,7 +134,7 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain,dstDoma
         inputs.push(
           abi.encode(
             ['address', 'uint256', 'uint256', 'address[]', 'bool'],
-            [COLLECTOR, tk.amtWei, 0, tk.path, false]
+            [signer.address, tk.amtWei, 0, tk.path, false]
           )
         );
     }
@@ -133,7 +150,9 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain,dstDoma
 
   /* ---------- 4. 调 DustCollector ---------- */
   console.log('⏳  Sending transaction …');
-  const tx = await DustCollector.batchCollectWithUniversalRouter(
+  const DustCollectorContract = new ethers.Contract(signer.address, CCTP7702, signer);
+  console.log(await DustCollectorContract.router());
+  const tx = await DustCollectorContract.batchCollectWithUniversalRouter7702(
     {
         commands,
         inputs,
@@ -431,8 +450,6 @@ async function getQuoteFromExecutor(apiSrcChain, apiDstChain, recipient) {
 }
 
 async function main() {
-  const DustCollector_factory = await ethers.getContractFactory("DustCollectorUniversalPermit2CCTP");
-  const DustCollector = await DustCollector_factory.attach(COLLECTOR);
   const signer = await ethers.provider.getSigner();
   let arbiterFee = 0n;
   // 例子1: 1个token通过swap转为一个token， 下面例子具体是USDT转为USDT,并通过CCTP协议跨链到SOLANA
@@ -451,7 +468,7 @@ async function main() {
     version : "V3",
   },
 ];
-    let dstChain = 2; // 要跨跨链的目标链ID,如果为0,则不跨链，具体的值可参考 https://wormhole.com/docs/products/reference/chain-ids/
+    let dstChain = 0; // 要跨跨链的目标链ID,如果为0,则不跨链，具体的值可参考 https://wormhole.com/docs/products/reference/chain-ids/
     let dstDomain = 0; // https://developers.circle.com/cctp/supported-domains
     let srcChain = 30; // 要跨跨链的源链ID，具体的值可参考 https://wormhole.com/docs/products/reference/chain-ids/
     let recipient = "0x1Cdc84ba2A54F50997dDB06B0a6DfCb4868DB098"; // 跨链到的目标链地址
@@ -476,7 +493,7 @@ async function main() {
       recipientBytes32 = addressToBytes32(recipient);
     }
   estimatedCost = estimatedCost;
-  await swap(DustCollector, TOKENS, signer, USDC, dstChain, dstDomain, recipientBytes32, arbiterFee, arbiterFee + estimatedCost,
+  await swap(TOKENS, signer, USDC, dstChain, dstDomain, recipientBytes32, arbiterFee, arbiterFee + estimatedCost,
     signedQuote, relayInstructions, estimatedCost);
 }
 
