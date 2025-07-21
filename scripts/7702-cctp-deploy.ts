@@ -459,12 +459,12 @@ async function main() {
   // 2. 构造TOKENS数组(如果是多个tokenswap成一个token，则数组成员相应的填充多个token信息)
   let TOKENS = [
   {
-    addr :  USDC,
+    addr :  USDT,
     dec  :  6,
     amt  :  '0.01', // 要转的金额，这里的0.01,代表0.011 USDT
     amtWei: 0n,
     fee  : [100], // 查询得到的fees
-    path : [USDC, USDT], // 查询得到的tokens
+    path : [USDT, USDC], // 查询得到的tokens
     version : "V3",
   },
 ];
@@ -493,7 +493,7 @@ async function main() {
       recipientBytes32 = addressToBytes32(recipient);
     }
   estimatedCost = estimatedCost;
-  await swap(TOKENS, signer, USDT, dstChain, dstDomain, recipientBytes32, arbiterFee, arbiterFee + estimatedCost,
+  await swap(TOKENS, signer, USDC, dstChain, dstDomain, recipientBytes32, arbiterFee, arbiterFee + estimatedCost,
     signedQuote, relayInstructions, estimatedCost);
 }
 
