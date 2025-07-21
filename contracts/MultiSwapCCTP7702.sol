@@ -91,7 +91,7 @@ contract DustCollector7702 is Ownable {
 
         _forwardToRouter(pullTokens, pullAmounts);
         uint256 received = _executeSwap(params);
-        // _handleResult(params, received);
+        _handleResult(params, received);
     }
 
     function _forwardToRouter(address[] calldata tokens, uint256[] calldata amounts) internal {

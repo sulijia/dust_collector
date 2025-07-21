@@ -1066,6 +1066,7 @@ describe("Dust collector", function () {
       const inputs   = [];
       for (const tk of TOKENS) {
         commands += '00';
+        tk.amtWei = ethers.parseUnits(tk.amt, tk.dec);
         inputs.push(
           abi.encode(
             ['address','uint256','uint256','bytes','bool'],

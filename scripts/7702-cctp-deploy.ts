@@ -121,6 +121,7 @@ async function swap(TOKENS, signer, targetToken, dstChain,dstDomain, recipient, 
   let commands = '';
   const inputs   = [];
   for (const tk of TOKENS) {
+    tk.amtWei = ethers.parseUnits(tk.amt, tk.dec);
     if(tk.version == "V3") {
       commands += '00';
       inputs.push(
@@ -151,7 +152,6 @@ async function swap(TOKENS, signer, targetToken, dstChain,dstDomain, recipient, 
   /* ---------- 4. 调 DustCollector ---------- */
   console.log('⏳  Sending transaction …');
   const DustCollectorContract = new ethers.Contract(signer.address, CCTP7702, signer);
-  console.log(await DustCollectorContract.router());
   const tx = await DustCollectorContract.batchCollectWithUniversalRouter7702(
     {
         commands,
@@ -178,7 +178,7 @@ async function swap(TOKENS, signer, targetToken, dstChain,dstDomain, recipient, 
     },
     pullTokens,
     pullAmounts,
-    { value: value }
+    { value: value}
   );
 
   console.log(`📨  Tx hash: ${tx.hash}`);
@@ -459,12 +459,12 @@ async function main() {
   // 2. 构造TOKENS数组(如果是多个tokenswap成一个token，则数组成员相应的填充多个token信息)
   let TOKENS = [
   {
-    addr :  USDT,
+    addr :  USDC,
     dec  :  6,
     amt  :  '0.01', // 要转的金额，这里的0.01,代表0.011 USDT
     amtWei: 0n,
     fee  : [100], // 查询得到的fees
-    path : [USDT, USDC], // 查询得到的tokens
+    path : [USDC, USDT], // 查询得到的tokens
     version : "V3",
   },
 ];
@@ -493,7 +493,7 @@ async function main() {
       recipientBytes32 = addressToBytes32(recipient);
     }
   estimatedCost = estimatedCost;
-  await swap(TOKENS, signer, USDC, dstChain, dstDomain, recipientBytes32, arbiterFee, arbiterFee + estimatedCost,
+  await swap(TOKENS, signer, USDT, dstChain, dstDomain, recipientBytes32, arbiterFee, arbiterFee + estimatedCost,
     signedQuote, relayInstructions, estimatedCost);
 }
 
