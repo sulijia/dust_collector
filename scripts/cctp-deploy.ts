@@ -14,6 +14,8 @@ import {
   signPermit
 } from '../test/permit2'
 import { abi as PERMIT2_ABI } from '../test/permit2/src/interfaces/IPermit2.sol/IPermit2.json'
+import { abi as DUST_ABI } from './DustCollectorUniversalPermit2CCTP.json'
+import { DustCollector } from "../typechain-types/DustCollector.sol";
 
 const USDC  = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const WETH  = "0x4200000000000000000000000000000000000006";
@@ -25,12 +27,52 @@ const AAVE  = "0x63706e401c06ac8513145b7687a14804d17f814b";
 const PERMIT2       = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 const COLLECTOR     = "0x9D7227D1EcF129e7E481FFA9e64BB96448EDb68d";
 const USDC_MINT     = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const METAMASK_WALLET = '0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B'; // MetaMask Smart Wallet
 /* ---------- ABI ---------- */
 const ERC20_ABI = [
   'function approve(address,uint256) external returns (bool)',
   'function allowance(address,address) view returns (uint256)'
 ];
 
+const METAMASK_WALLET_ABI = [
+  {
+    "type": "function",
+    "name": "execute",
+    "inputs": [
+      {
+        "name": "_mode",
+        "type": "bytes32"
+      },
+      {
+        "name": "_executionCalldata", 
+        "type": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "executeFromExecutor",
+    "inputs": [
+      {
+        "name": "_mode",
+        "type": "bytes32"
+      },
+      {
+        "name": "_executionCalldata",
+        "type": "bytes" 
+      }
+    ],
+    "outputs": [
+      {
+        "name": "returnData_",
+        "type": "bytes[]"
+      }
+    ],
+    "stateMutability": "payable"
+  }
+];
 async function ensureApproval(token:string, wallet:SignerWithAddress, spender:string, amount:bigint) {
     const t  = new ethers.Contract(token, ERC20_ABI  , wallet);
     const allowance = await t.allowance(wallet.address, spender);
@@ -85,23 +127,9 @@ async function signPerimit(TOKENS:any, owner:SignerWithAddress) {
     console.log('✅ Permit tx confirmed\n');
   }
 
-// 参数:
-// DustCollector: cctp 版本dust collector 合约
-// TOKENS: 需要swap的token数组信息
-// signer:签名钱包
-// targetToken: 要swap成什么token
-// dstChain: 如果需要跨链，这里是目标链的chain id,为0不需要跨链
-// dstDomain
-// recipient: 如果需要跨链，这里是另一条链上的接收地址,为ZeroHash不需要跨链
-// arbiterFee: 给relayer的费用，一般可以为0
-// value: 需要转的eth，看具体场景取值
-// signedQuote, relayInstructions, estimatedCost:调用接口得到的返回值
-async function swap(DustCollector, TOKENS, signer, targetToken, dstChain,dstDomain, recipient, arbiterFee, value, signedQuote, relayInstructions, estimatedCost) {
+async function createParameters(TOKENS,signer, targetToken, dstChain,dstDomain, recipient, arbiterFee, signedQuote, relayInstructions, estimatedCost) {
   const abi      = ethers.AbiCoder.defaultAbiCoder();
-  // 把所有token授权给permit2
-  await signPerimit(TOKENS, signer)
-
-  let commands = '';
+   let commands = '';
   const inputs   = [];
   for (const tk of TOKENS) {
     if(tk.version == "V3") {
@@ -127,14 +155,7 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain,dstDoma
 
   const deadline = Math.floor(Date.now() / 1e3) + 1800;  // 30 分钟
 
-  /* ---------- 3. pullTokens & pullAmounts ---------- */
-  const pullTokens  = TOKENS.map(t => t.addr);
-  const pullAmounts = TOKENS.map(t => t.amtWei);
-
-  /* ---------- 4. 调 DustCollector ---------- */
-  console.log('⏳  Sending transaction …');
-  const tx = await DustCollector.batchCollectWithUniversalRouter(
-    {
+  return {
         commands,
         inputs,
         deadline,
@@ -156,7 +177,35 @@ async function swap(DustCollector, TOKENS, signer, targetToken, dstChain,dstDoma
           payee: FEE_PAYEE
         },
         estimatedCost: estimatedCost
-    },
+  }
+}
+
+
+// 参数:
+// DustCollector: cctp 版本dust collector 合约
+// TOKENS: 需要swap的token数组信息
+// signer:签名钱包
+// targetToken: 要swap成什么token
+// dstChain: 如果需要跨链，这里是目标链的chain id,为0不需要跨链
+// dstDomain
+// recipient: 如果需要跨链，这里是另一条链上的接收地址,为ZeroHash不需要跨链
+// arbiterFee: 给relayer的费用，一般可以为0
+// value: 需要转的eth，看具体场景取值
+// signedQuote, relayInstructions, estimatedCost:调用接口得到的返回值
+async function swap(DustCollector, TOKENS, signer, targetToken, dstChain, dstDomain, recipient, arbiterFee, value,signedQuote, relayInstructions, estimatedCost) {
+  
+  // 把所有token授权给permit2
+  await signPerimit(TOKENS, signer)
+
+  let params = await createParameters(TOKENS, signer, targetToken, dstChain, dstDomain, recipient, arbiterFee,
+    signedQuote, relayInstructions, estimatedCost);
+  /* ---------- 3. pullTokens & pullAmounts ---------- */
+  const pullTokens  = TOKENS.map(t => t.addr);
+  const pullAmounts = TOKENS.map(t => t.amtWei);
+  /* ---------- 4. 调 DustCollector ---------- */
+  console.log('⏳  Sending transaction …');
+  const tx = await DustCollector.batchCollectWithUniversalRouter(
+    params,
     pullTokens,
     pullAmounts,
     { value: value }
@@ -430,6 +479,145 @@ async function getQuoteFromExecutor(apiSrcChain, apiDstChain, recipient) {
   }
 }
 
+async function delegateToContract(wallet, provider, targetContract) {
+  console.log('\n🔗 ====== EIP-7702 DELEGATION PROCESS ======');
+  
+  const code = await provider.getCode(wallet.address);
+  
+  if (code !== "0x") {
+    if (code.startsWith("0xef0100")) {
+      const currentDelegation = "0x" + code.slice(8);
+      console.log("⚠️  EOA currently delegated to:", currentDelegation);
+      
+      if (currentDelegation.toLowerCase() === targetContract.toLowerCase()) {
+        console.log("✅ Already delegated to target contract. Ready to proceed!");
+        return true;
+      }
+    }
+  } else {
+    console.log("📋 EOA has no current delegation. Will delegate now...");
+  }
+
+  const contractCode = await provider.getCode(targetContract);
+  if (contractCode === "0x") {
+    throw new Error("Target address is not a contract");
+  }
+
+  const network = await provider.getNetwork();
+  const currentNonce = await wallet.getNonce();
+  
+  console.log("Network Chain ID:", network.chainId);
+  console.log("Delegating EOA to:", targetContract);
+
+  const authorization = await wallet.authorize({
+    address: targetContract,
+    nonce: currentNonce + 1,
+    chainId: network.chainId,
+  });
+
+  const tx = await wallet.sendTransaction({
+    type: 4,
+    to: wallet.address,
+    authorizationList: [authorization],
+  });
+
+  console.log("✅ Sent delegate tx:", tx.hash);
+  const receipt = await tx.wait();
+  console.log("✅ Confirmed in block:", receipt.blockNumber);
+
+  await new Promise(resolve => setTimeout(resolve, 3000));
+
+  let retries = 0;
+  const maxRetries = 5;
+  
+  while (retries < maxRetries) {
+    const newCode = await provider.getCode(wallet.address);
+    
+    if (newCode.startsWith("0xef0100")) {
+      const delegatedTo = "0x" + newCode.slice(8);
+      if (delegatedTo.toLowerCase() === targetContract.toLowerCase()) {
+        console.log("✅ Delegation successful! Delegated to:", delegatedTo);
+        console.log("🎉 EIP-7702 delegation completed successfully!");
+        return true;
+      }
+    }
+    
+    retries++;
+    if (retries < maxRetries) {
+      console.log(`⏳ Retry ${retries}/${maxRetries} - waiting for state update...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
+
+  throw new Error("Failed to verify delegation");
+}
+
+// 🆕 Create batch approval + dust collection calldata for MetaMask Smart Wallet
+async function createBatchExecutionCalldata(TOKENS, signer, targetToken, dstChain,dstDomain, recipient, arbiterFee, value, signedQuote, relayInstructions, estimatedCost) {
+  const executions = [];
+  const permit2 = new ethers.Contract(PERMIT2, PERMIT2_ABI, signer);
+  for (const token of TOKENS) {
+    token.amtWei = ethers.parseUnits(token.amt, token.dec);
+    const tokenContract = new ethers.Contract(token.addr, ERC20_ABI, signer);
+    const curErc20Allow = await tokenContract.allowance(signer.address, PERMIT2);
+      if (curErc20Allow < token.amtWei) {
+        const approveCalldata = tokenContract.interface.encodeFunctionData('approve', [PERMIT2, token.amtWei]);
+        executions.push({
+          target: token.addr,
+          value: 0,
+          callData: approveCalldata
+        });
+      }
+    const [allowAmt] = await permit2.allowance(signer.address, token.addr, COLLECTOR);
+    if (allowAmt < token.amtWei) {
+      const maxUint160 = (1n << 160n) - 1n;               // 2¹⁶⁰-1
+      const expiration = Math.floor(Date.now() / 1e3) + 3600 * 24 * 30; // 30 天
+        const approveCalldata = permit2.interface.encodeFunctionData('approve', [token.addr, COLLECTOR, maxUint160, expiration]);
+        executions.push({
+          target: PERMIT2,
+          value: 0,
+          callData: approveCalldata
+        });
+    }
+    };
+  let params = await createParameters(TOKENS, signer, targetToken, dstChain, dstDomain, recipient, arbiterFee,
+    signedQuote, relayInstructions, estimatedCost);
+    
+  /* ---------- 3. pullTokens & pullAmounts ---------- */
+  const pullTokens  = TOKENS.map(t => t.addr);
+  const pullAmounts = TOKENS.map(t => t.amtWei);
+  // 2. Add the main dust collection transaction
+  const dustContract = new ethers.Contract(COLLECTOR, DUST_ABI);
+  const dustCalldata = dustContract.interface.encodeFunctionData('batchCollectWithUniversalRouter', [
+    params,
+    pullTokens,
+    pullAmounts
+  ]);
+
+  executions.push({
+    target: COLLECTOR,
+    value: value, // Include ETH value for bridge fees
+    callData: dustCalldata
+  });
+  
+  
+  // 3. Encode executions for MetaMask Smart Wallet
+  // Mode: 0x01000000 = EXEC_TYPE_DEFAULT + CALL_TYPE_BATCH 
+  const mode = '0x0100000000000000000000000000000000000000000000000000000000000000';
+
+  // Encode execution array
+  const executionCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
+    ['tuple(address target, uint256 value, bytes callData)[]'],
+    [executions]
+  );
+  return {
+    mode,
+    executionCalldata,
+    totalValue: estimatedCost,
+    executionsCount: executions.length
+  };
+}
+
 async function main() {
   const DustCollector_factory = await ethers.getContractFactory("DustCollectorUniversalPermit2CCTP");
   const DustCollector = await DustCollector_factory.attach(COLLECTOR);
@@ -451,7 +639,7 @@ async function main() {
     version : "V3",
   },
 ];
-    let dstChain = 2; // 要跨跨链的目标链ID,如果为0,则不跨链，具体的值可参考 https://wormhole.com/docs/products/reference/chain-ids/
+    let dstChain = 0; // 要跨跨链的目标链ID,如果为0,则不跨链，具体的值可参考 https://wormhole.com/docs/products/reference/chain-ids/
     let dstDomain = 0; // https://developers.circle.com/cctp/supported-domains
     let srcChain = 30; // 要跨跨链的源链ID，具体的值可参考 https://wormhole.com/docs/products/reference/chain-ids/
     let recipient = "0x1Cdc84ba2A54F50997dDB06B0a6DfCb4868DB098"; // 跨链到的目标链地址
@@ -476,8 +664,28 @@ async function main() {
       recipientBytes32 = addressToBytes32(recipient);
     }
   estimatedCost = estimatedCost;
-  await swap(DustCollector, TOKENS, signer, USDC, dstChain, dstDomain, recipientBytes32, arbiterFee, arbiterFee + estimatedCost,
+  // TIPS:前端需要判断是否支持智能帐号
+  let supportSmartAccount = true;
+  if(supportSmartAccount) {
+    // TIPS:检测账户是否是智能账户，前端在这里的处理方式不一样，具体代码参照群内消息
+    await delegateToContract(signer, signer.provider, METAMASK_WALLET);
+
+    const { mode, executionCalldata, totalValue, executionsCount } = await createBatchExecutionCalldata(
+        TOKENS, signer, USDC, dstChain, dstDomain, recipientBytes32, arbiterFee, arbiterFee + estimatedCost,
+      signedQuote, relayInstructions, estimatedCost
+    );
+    const smartWalletContract = new ethers.Contract(signer.address, METAMASK_WALLET_ABI, signer);
+      const tx = await smartWalletContract.execute(mode, executionCalldata, {
+        value: totalValue
+      });
+
+    console.log('\n🎯 ====== TRANSACTION RESULT ======');
+    console.log('📝 Transaction hash:', tx.hash);
+    console.log('⏳ Waiting for confirmation...');
+  } else {
+    await swap(DustCollector, TOKENS, signer, USDC, dstChain, dstDomain, recipientBytes32, arbiterFee, arbiterFee + estimatedCost,
     signedQuote, relayInstructions, estimatedCost);
+  }
 }
 
 // We recommend this pattern to be able to use async/await everywhere
