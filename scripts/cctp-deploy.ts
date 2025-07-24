@@ -25,7 +25,13 @@ const AAVE  = "0x63706e401c06ac8513145b7687a14804d17f814b";
 
 
 const PERMIT2       = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
-const COLLECTOR     = "0x9D7227D1EcF129e7E481FFA9e64BB96448EDb68d";
+let COLLECTOR:string;
+let supportSmartAccount = true;
+if(supportSmartAccount) {
+  COLLECTOR = "0xc310d8D806c61083c49184C0d45aD7c04092fb24";
+} else {
+  COLLECTOR = "0x9D7227D1EcF129e7E481FFA9e64BB96448EDb68d";
+}
 const USDC_MINT     = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const METAMASK_WALLET = '0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B'; // MetaMask Smart Wallet
 /* ---------- ABI ---------- */
@@ -555,31 +561,16 @@ async function delegateToContract(wallet, provider, targetContract) {
 // 🆕 Create batch approval + dust collection calldata for MetaMask Smart Wallet
 async function createBatchExecutionCalldata(TOKENS, signer, targetToken, dstChain,dstDomain, recipient, arbiterFee, value, signedQuote, relayInstructions, estimatedCost) {
   const executions = [];
-  const permit2 = new ethers.Contract(PERMIT2, PERMIT2_ABI, signer);
   for (const token of TOKENS) {
     token.amtWei = ethers.parseUnits(token.amt, token.dec);
     const tokenContract = new ethers.Contract(token.addr, ERC20_ABI, signer);
-    const curErc20Allow = await tokenContract.allowance(signer.address, PERMIT2);
-      if (curErc20Allow < token.amtWei) {
-        const approveCalldata = tokenContract.interface.encodeFunctionData('approve', [PERMIT2, token.amtWei]);
-        executions.push({
-          target: token.addr,
-          value: 0,
-          callData: approveCalldata
-        });
-      }
-    const [allowAmt] = await permit2.allowance(signer.address, token.addr, COLLECTOR);
-    if (allowAmt < token.amtWei) {
-      const maxUint160 = (1n << 160n) - 1n;               // 2¹⁶⁰-1
-      const expiration = Math.floor(Date.now() / 1e3) + 3600 * 24 * 30; // 30 天
-        const approveCalldata = permit2.interface.encodeFunctionData('approve', [token.addr, COLLECTOR, maxUint160, expiration]);
-        executions.push({
-          target: PERMIT2,
-          value: 0,
-          callData: approveCalldata
-        });
-    }
-    };
+    const approveCalldata = tokenContract.interface.encodeFunctionData('approve', [COLLECTOR, token.amtWei]);
+    executions.push({
+      target: token.addr,
+      value: 0,
+      callData: approveCalldata
+    });
+  };
   let params = await createParameters(TOKENS, signer, targetToken, dstChain, dstDomain, recipient, arbiterFee,
     signedQuote, relayInstructions, estimatedCost);
     
@@ -632,7 +623,7 @@ async function main() {
   {
     addr :  USDT,
     dec  :  6,
-    amt  :  '0.01', // 要转的金额，这里的0.01,代表0.011 USDT
+    amt  :  '0.01', // 要转的金额，这里的0.01,代表0.01 USDT
     amtWei: 0n,
     fee  : [100], // 查询得到的fees
     path : [USDT, USDC], // 查询得到的tokens
@@ -665,7 +656,6 @@ async function main() {
     }
   estimatedCost = estimatedCost;
   // TIPS:前端需要判断是否支持智能帐号
-  let supportSmartAccount = true;
   if(supportSmartAccount) {
     // TIPS:检测账户是否是智能账户，前端在这里的处理方式不一样，具体代码参照群内消息
     await delegateToContract(signer, signer.provider, METAMASK_WALLET);
