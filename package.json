@@ -1,6 +1,7 @@
 {
   "name": "hardhat-project",
   "dependencies": {
+    "@mayanfinance/swap-sdk": "^10.9.2",
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "@openzeppelin/contracts": "^5.3.0",
     "@solana/spl-token": "^0.4.13",

@@ -13,38 +13,30 @@ interface IPermit2 {
     function transferFrom(address from, address to, uint160 amount, address token) external;
 }
 
-interface ICCTPv2WithExecutor {
-    function depositForBurn(
-        uint256 amount,
-        uint16 destinationChain,
-        uint32 destinationDomain,
-        bytes32 mintRecipient,
-        address burnToken,
-        bytes32 destinationCaller,
-        uint256 maxFee,
-        uint32 minFinalityThreshold,
-        ExecutorArgs calldata executorArgs,
-        FeeArgs calldata feeArgs
-    ) external payable;
+struct PermitParams {
+    uint256 value;
+    uint256 deadline;
+    uint8 v;
+    bytes32 r;
+    bytes32 s;
 }
 
-struct ExecutorArgs {
-    address refundAddress;
-    bytes signedQuote;
-    bytes instructions;
+interface IMayanForwarder2 {
+	function forwardERC20(
+		address tokenIn,
+		uint256 amountIn,
+		PermitParams calldata permitParams,
+		address mayanProtocol,
+		bytes calldata protocolData
+	) external payable ;
 }
 
-struct FeeArgs {
-    uint16 dbps;
-    address payee;
-}
-
-contract DustCollectorUniversalPermit2CCTP is Ownable {
+contract DustCollectorUniversalPermit2Mayan is Ownable {
     using SafeERC20 for IERC20;
 
     IUniversalRouter public immutable router;
     IPermit2 public immutable permit2;
-    ICCTPv2WithExecutor public immutable cctp;
+    IMayanForwarder2 public immutable mayan;
 
     address public feeCollector;
     uint256 public feeBps = 30;
@@ -55,14 +47,10 @@ contract DustCollectorUniversalPermit2CCTP is Ownable {
         uint256 deadline;
         address targetToken;
         uint16 dstChain;
-        uint32 dstDomain;
         bytes32 recipient;
-        uint256 arbiterFee;
-        bytes32 destinationCaller;
-        uint256 maxFee;
-        uint32 minFinalityThreshold;
-        ExecutorArgs executorArgs;
-        FeeArgs feeArgs;
+        PermitParams permitParams;
+        address mayanProtocol;
+        bytes protocolData;
         uint256 estimatedCost;
     }
 
@@ -70,11 +58,11 @@ contract DustCollectorUniversalPermit2CCTP is Ownable {
     event Swapped(address indexed user, address indexed token, uint256 amount);
     event Bridged(address indexed user, address indexed token, uint256 amount, uint16 dstChain, bytes32 recipient);
 
-    constructor(address _router, address _permit2, address _cctp, address _feeCollector) Ownable(msg.sender) {
-        require(_router != address(0) && _permit2 != address(0) && _cctp != address(0) && _feeCollector != address(0), "zero addr");
+    constructor(address _router, address _permit2, address _mayan, address _feeCollector) Ownable(msg.sender) {
+        require(_router != address(0) && _permit2 != address(0) && _mayan != address(0) && _feeCollector != address(0), "zero addr");
         router = IUniversalRouter(_router);
         permit2 = IPermit2(_permit2);
-        cctp = ICCTPv2WithExecutor(_cctp);
+        mayan = IMayanForwarder2(_mayan);
         feeCollector = _feeCollector;
     }
 
@@ -130,28 +118,23 @@ contract DustCollectorUniversalPermit2CCTP is Ownable {
             emit Swapped(msg.sender, p.targetToken, userAmt);
         } else {
             // 跨链操作
-            _bridgeWithCCTP(p, userAmt);
+            _bridgeWithMayan(p, userAmt);
         }
     }
 
-    function _bridgeWithCCTP(SwapParams calldata p, uint256 amount) internal {
+    function _bridgeWithMayan(SwapParams calldata p, uint256 amount) internal {
         IERC20 token = IERC20(p.targetToken);
-        token.safeIncreaseAllowance(address(cctp), amount);
+        token.safeIncreaseAllowance(address(mayan), amount);
 
-        cctp.depositForBurn{value: p.estimatedCost}(
-            amount,
-            p.dstChain,
-            p.dstDomain,
-            p.recipient,
+        mayan.forwardERC20{value: p.estimatedCost}(
             p.targetToken,
-            p.destinationCaller,
-            p.maxFee,
-            p.minFinalityThreshold,
-            p.executorArgs,
-            p.feeArgs
+            amount,
+            p.permitParams,
+            p.mayanProtocol,
+            p.protocolData
         );
 
-        token.approve(address(cctp), 0);
+        token.approve(address(mayan), 0);
         emit Bridged(msg.sender, p.targetToken, amount, p.dstChain, p.recipient);
     }
 
